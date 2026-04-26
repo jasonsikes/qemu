@@ -1,0 +1,389 @@
+#
+# Motorola 6809 instruction decode definitions.
+# Instructions are left-justified in a 32-bit word (byte 0 in bits 31:24).
+#
+# Copyright (c) 2025 Jason G. Sikes
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, see
+# <http://www.gnu.org/licenses/lgpl-2.1.html>
+#
+
+# Argument sets
+&imm8               imm
+&imm16              imm
+&addr8              addr
+&addr16             addr
+&tfr                post
+&branch             cond disp
+&rel8               disp
+&rel16              disp
+&lbranch            cond disp
+
+# Formats
+@op_imm8            ........ imm:8                          &imm8
+@op_imm16           ........ imm:16                         &imm16
+@op_dir             ........ addr:8                         &addr8
+@op_ext             ........ addr:16                        &addr16
+@op_tfr             ........ post:8                         &tfr
+@op_branch          .... cond:4 disp:s8                     &branch
+@op_rel8            ........ disp:s8                        &rel8
+@op_rel16           ........ disp:s16                       &rel16
+
+# Page $10 / $11 formats (16-bit opcode, then the operand)
+@op10_imm16         ................ imm:16                 &imm16
+@op10_dir           ................ addr:8                 &addr8
+@op10_ext           ................ addr:16                &addr16
+@op_lbranch         ........ .... cond:4 disp:s16           &lbranch
+
+#
+# NOP / DAA / ABX / MUL / ANDCC / ORCC
+#
+NOP                 0001 0010
+DAA                 0001 1001
+ABX                 0011 1010
+MUL                 0011 1101
+ANDCC               0001 1100 .... ....                     @op_imm8
+ORCC                0001 1010 .... ....                     @op_imm8
+
+#
+# LEAX / LEAY / LEAS / LEAU
+#
+LEAX                0011 0000
+LEAY                0011 0001
+LEAS                0011 0010
+LEAU                0011 0011
+
+#
+# BRANCH / LBRA / LBRANCH
+#
+BRANCH              0010 .... .... ....                     @op_branch
+LBRA                0001 0110 .... .... .... ....           @op_rel16
+# $1020 / LBRANCH cond 0 rejected in translation.
+LBRANCH             0001 0000 0010 .... .... .... .... .... @op_lbranch
+
+#
+# ADDA / ADDB / ADDD
+#
+ADDA_imm            1000 1011 .... ....                     @op_imm8
+ADDA_dir            1001 1011 .... ....                     @op_dir
+ADDA_idx            1010 1011
+ADDA_ext            1011 1011 .... .... .... ....           @op_ext
+
+ADDB_imm            1100 1011 .... ....                     @op_imm8
+ADDB_dir            1101 1011 .... ....                     @op_dir
+ADDB_idx            1110 1011
+ADDB_ext            1111 1011 .... .... .... ....           @op_ext
+
+ADDD_imm            1100 0011 .... .... .... ....           @op_imm16
+ADDD_dir            1101 0011 .... ....                     @op_dir
+ADDD_idx            1110 0011
+ADDD_ext            1111 0011 .... .... .... ....           @op_ext
+
+#
+# LDA / LDB / LDD
+#
+LDA_imm             1000 0110 .... ....                     @op_imm8
+LDA_dir             1001 0110 .... ....                     @op_dir
+LDA_idx             1010 0110
+LDA_ext             1011 0110 .... .... .... ....           @op_ext
+
+LDB_imm             1100 0110 .... ....                     @op_imm8
+LDB_dir             1101 0110 .... ....                     @op_dir
+LDB_idx             1110 0110
+LDB_ext             1111 0110 .... .... .... ....           @op_ext
+
+LDD_imm             1100 1100 .... .... .... ....           @op_imm16
+LDD_dir             1101 1100 .... ....                     @op_dir
+LDD_idx             1110 1100
+LDD_ext             1111 1100 .... .... .... ....           @op_ext
+
+#
+# STA / STB / STD
+#
+STA_dir             1001 0111 .... ....                     @op_dir
+STA_idx             1010 0111
+STA_ext             1011 0111 .... .... .... ....           @op_ext
+
+STB_dir             1101 0111 .... ....                     @op_dir
+STB_idx             1110 0111
+STB_ext             1111 0111 .... .... .... ....           @op_ext
+
+STD_dir             1101 1101 .... ....                     @op_dir
+STD_idx             1110 1101
+STD_ext             1111 1101 .... .... .... ....           @op_ext
+
+#
+# LDX / STX / LDU / STU
+#
+LDX_imm             1000 1110 .... .... .... ....           @op_imm16
+LDX_dir             1001 1110 .... ....                     @op_dir
+LDX_idx             1010 1110
+LDX_ext             1011 1110 .... .... .... ....           @op_ext
+
+STX_dir             1001 1111 .... ....                     @op_dir
+STX_idx             1010 1111
+STX_ext             1011 1111 .... .... .... ....           @op_ext
+
+LDU_imm             1100 1110 .... .... .... ....           @op_imm16
+LDU_dir             1101 1110 .... ....                     @op_dir
+LDU_idx             1110 1110
+LDU_ext             1111 1110 .... .... .... ....           @op_ext
+
+STU_dir             1101 1111 .... ....                     @op_dir
+STU_idx             1110 1111
+STU_ext             1111 1111 .... .... .... ....           @op_ext
+
+#
+# LDY / STY / LDS / STS
+#
+LDY_imm             0001 0000 1000 1110 .... .... .... .... @op10_imm16
+LDY_dir             0001 0000 1001 1110 .... ....           @op10_dir
+LDY_idx             0001 0000 1010 1110
+LDY_ext             0001 0000 1011 1110 .... .... .... .... @op10_ext
+
+STY_dir             0001 0000 1001 1111 .... ....           @op10_dir
+STY_idx             0001 0000 1010 1111
+STY_ext             0001 0000 1011 1111 .... .... .... .... @op10_ext
+
+LDS_imm             0001 0000 1100 1110 .... .... .... .... @op10_imm16
+LDS_dir             0001 0000 1101 1110 .... ....           @op10_dir
+LDS_idx             0001 0000 1110 1110
+LDS_ext             0001 0000 1111 1110 .... .... .... .... @op10_ext
+
+STS_dir             0001 0000 1101 1111 .... ....           @op10_dir
+STS_idx             0001 0000 1110 1111
+STS_ext             0001 0000 1111 1111 .... .... .... .... @op10_ext
+
+#
+# AND / BIT / EOR / OR
+#
+ANDA_imm            1000 0100 .... ....                     @op_imm8
+ANDA_dir            1001 0100 .... ....                     @op_dir
+ANDA_idx            1010 0100
+ANDA_ext            1011 0100 .... .... .... ....           @op_ext
+
+ANDB_imm            1100 0100 .... ....                     @op_imm8
+ANDB_dir            1101 0100 .... ....                     @op_dir
+ANDB_idx            1110 0100
+ANDB_ext            1111 0100 .... .... .... ....           @op_ext
+
+BITA_imm            1000 0101 .... ....                     @op_imm8
+BITA_dir            1001 0101 .... ....                     @op_dir
+BITA_idx            1010 0101
+BITA_ext            1011 0101 .... .... .... ....           @op_ext
+
+BITB_imm            1100 0101 .... ....                     @op_imm8
+BITB_dir            1101 0101 .... ....                     @op_dir
+BITB_idx            1110 0101
+BITB_ext            1111 0101 .... .... .... ....           @op_ext
+
+EORA_imm            1000 1000 .... ....                     @op_imm8
+EORA_dir            1001 1000 .... ....                     @op_dir
+EORA_idx            1010 1000
+EORA_ext            1011 1000 .... .... .... ....           @op_ext
+
+EORB_imm            1100 1000 .... ....                     @op_imm8
+EORB_dir            1101 1000 .... ....                     @op_dir
+EORB_idx            1110 1000
+EORB_ext            1111 1000 .... .... .... ....           @op_ext
+
+ORA_imm             1000 1010 .... ....                     @op_imm8
+ORA_dir             1001 1010 .... ....                     @op_dir
+ORA_idx             1010 1010
+ORA_ext             1011 1010 .... .... .... ....           @op_ext
+
+ORB_imm             1100 1010 .... ....                     @op_imm8
+ORB_dir             1101 1010 .... ....                     @op_dir
+ORB_idx             1110 1010
+ORB_ext             1111 1010 .... .... .... ....           @op_ext
+
+#
+# SUB / SBC / ADC
+#
+SUBA_imm            1000 0000 .... ....                     @op_imm8
+SUBA_dir            1001 0000 .... ....                     @op_dir
+SUBA_idx            1010 0000
+SUBA_ext            1011 0000 .... .... .... ....           @op_ext
+
+SUBB_imm            1100 0000 .... ....                     @op_imm8
+SUBB_dir            1101 0000 .... ....                     @op_dir
+SUBB_idx            1110 0000
+SUBB_ext            1111 0000 .... .... .... ....           @op_ext
+
+SBCA_imm            1000 0010 .... ....                     @op_imm8
+SBCA_dir            1001 0010 .... ....                     @op_dir
+SBCA_idx            1010 0010
+SBCA_ext            1011 0010 .... .... .... ....           @op_ext
+
+SBCB_imm            1100 0010 .... ....                     @op_imm8
+SBCB_dir            1101 0010 .... ....                     @op_dir
+SBCB_idx            1110 0010
+SBCB_ext            1111 0010 .... .... .... ....           @op_ext
+
+SUBD_imm            1000 0011 .... .... .... ....           @op_imm16
+SUBD_dir            1001 0011 .... ....                     @op_dir
+SUBD_idx            1010 0011
+SUBD_ext            1011 0011 .... .... .... ....           @op_ext
+
+ADCA_imm            1000 1001 .... ....                     @op_imm8
+ADCA_dir            1001 1001 .... ....                     @op_dir
+ADCA_idx            1010 1001
+ADCA_ext            1011 1001 .... .... .... ....           @op_ext
+
+ADCB_imm            1100 1001 .... ....                     @op_imm8
+ADCB_dir            1101 1001 .... ....                     @op_dir
+ADCB_idx            1110 1001
+ADCB_ext            1111 1001 .... .... .... ....           @op_ext
+
+#
+# CMP
+#
+CMPA_imm            1000 0001 .... ....                     @op_imm8
+CMPA_dir            1001 0001 .... ....                     @op_dir
+CMPA_idx            1010 0001
+CMPA_ext            1011 0001 .... .... .... ....           @op_ext
+
+CMPB_imm            1100 0001 .... ....                     @op_imm8
+CMPB_dir            1101 0001 .... ....                     @op_dir
+CMPB_idx            1110 0001
+CMPB_ext            1111 0001 .... .... .... ....           @op_ext
+
+CMPX_imm            1000 1100 .... .... .... ....           @op_imm16
+CMPX_dir            1001 1100 .... ....                     @op_dir
+CMPX_idx            1010 1100
+CMPX_ext            1011 1100 .... .... .... ....           @op_ext
+
+CMPD_imm            0001 0000 1000 0011 .... .... .... .... @op10_imm16
+CMPD_dir            0001 0000 1001 0011 .... ....           @op10_dir
+CMPD_idx            0001 0000 1010 0011
+CMPD_ext            0001 0000 1011 0011 .... .... .... .... @op10_ext
+
+CMPY_imm            0001 0000 1000 1100 .... .... .... .... @op10_imm16
+CMPY_dir            0001 0000 1001 1100 .... ....           @op10_dir
+CMPY_idx            0001 0000 1010 1100
+CMPY_ext            0001 0000 1011 1100 .... .... .... .... @op10_ext
+
+CMPU_imm            0001 0001 1000 0011 .... .... .... .... @op10_imm16
+CMPU_dir            0001 0001 1001 0011 .... ....           @op10_dir
+CMPU_idx            0001 0001 1010 0011
+CMPU_ext            0001 0001 1011 0011 .... .... .... .... @op10_ext
+
+CMPS_imm            0001 0001 1000 1100 .... .... .... .... @op10_imm16
+CMPS_dir            0001 0001 1001 1100 .... ....           @op10_dir
+CMPS_idx            0001 0001 1010 1100
+CMPS_ext            0001 0001 1011 1100 .... .... .... .... @op10_ext
+
+#
+# SEX / EXG / TFR
+#
+SEX                 0001 1101
+EXG                 0001 1110 .... ....                     @op_tfr
+TFR                 0001 1111 .... ....                     @op_tfr
+
+#
+# NEG / COM / LSR / ROR / ASR / ASL / ROL / DEC / INC / CLR / TST
+#
+NEGA                0100 0000
+NEGB                0101 0000
+NEG_dir             0000 0000 .... ....                     @op_dir
+NEG_idx             0110 0000
+NEG_ext             0111 0000 .... .... .... ....           @op_ext
+
+COMA                0100 0011
+COMB                0101 0011
+COM_dir             0000 0011 .... ....                     @op_dir
+COM_idx             0110 0011
+COM_ext             0111 0011 .... .... .... ....           @op_ext
+
+LSRA                0100 0100
+LSRB                0101 0100
+LSR_dir             0000 0100 .... ....                     @op_dir
+LSR_idx             0110 0100
+LSR_ext             0111 0100 .... .... .... ....           @op_ext
+
+RORA                0100 0110
+RORB                0101 0110
+ROR_dir             0000 0110 .... ....                     @op_dir
+ROR_idx             0110 0110
+ROR_ext             0111 0110 .... .... .... ....           @op_ext
+
+ASRA                0100 0111
+ASRB                0101 0111
+ASR_dir             0000 0111 .... ....                     @op_dir
+ASR_idx             0110 0111
+ASR_ext             0111 0111 .... .... .... ....           @op_ext
+
+ASLA                0100 1000
+ASLB                0101 1000
+ASL_dir             0000 1000 .... ....                     @op_dir
+ASL_idx             0110 1000
+ASL_ext             0111 1000 .... .... .... ....           @op_ext
+
+ROLA                0100 1001
+ROLB                0101 1001
+ROL_dir             0000 1001 .... ....                     @op_dir
+ROL_idx             0110 1001
+ROL_ext             0111 1001 .... .... .... ....           @op_ext
+
+DECA                0100 1010
+DECB                0101 1010
+DEC_dir             0000 1010 .... ....                     @op_dir
+DEC_idx             0110 1010
+DEC_ext             0111 1010 .... .... .... ....           @op_ext
+
+INCA                0100 1100
+INCB                0101 1100
+INC_dir             0000 1100 .... ....                     @op_dir
+INC_idx             0110 1100
+INC_ext             0111 1100 .... .... .... ....           @op_ext
+
+CLRA                0100 1111
+CLRB                0101 1111
+CLR_dir             0000 1111 .... ....                     @op_dir
+CLR_idx             0110 1111
+CLR_ext             0111 1111 .... .... .... ....           @op_ext
+
+TSTA                0100 1101
+TSTB                0101 1101
+TST_dir             0000 1101 .... ....                     @op_dir
+TST_idx             0110 1101
+TST_ext             0111 1101 .... .... .... ....           @op_ext
+
+#
+# PSHS / PULS / PSHU / PULU / RTS / RTI / SWI / BSR / JSR / JMP
+#
+PSHS                0011 0100 .... ....                     @op_tfr
+PULS                0011 0101 .... ....                     @op_tfr
+PSHU                0011 0110 .... ....                     @op_tfr
+PULU                0011 0111 .... ....                     @op_tfr
+RTS                 0011 1001
+RTI                 0011 1011
+SWI                 0011 1111
+SWI2                0001 0000 0011 1111
+SWI3                0001 0001 0011 1111
+LBSR                0001 0111 .... .... .... ....           @op_rel16
+BSR                 1000 1101 .... ....                     @op_rel8
+JSR_dir             1001 1101 .... ....                     @op_dir
+JSR_idx             1010 1101
+JSR_ext             1011 1101 .... .... .... ....           @op_ext
+
+JMP_dir             0000 1110 .... ....                     @op_dir
+JMP_idx             0110 1110
+JMP_ext             0111 1110 .... .... .... ....           @op_ext
+
+#
+# CWAI / SYNC
+#
+CWAI                0011 1100 .... ....                     @op_imm8
+SYNC                0001 0011

@@ -16,6 +16,7 @@ slow_qtests = {
   'prom-env-test': 360,
   'boot-serial-test': 360,
   'qos-test': 120,
+  'm6809-cpu-test': 120,
   'vmgenid-test': 610,
 }
 
@@ -142,6 +143,8 @@ qtests_alpha = ['boot-serial-test'] + \
   (config_all_devices.has_key('CONFIG_VGA') ? ['display-vga-test'] : [])
 
 qtests_avr = [ 'boot-serial-test' ]
+
+qtests_m6809 = [ 'm6809-cpu-test' ]
 
 qtests_hppa = \
   qtests_filter + \

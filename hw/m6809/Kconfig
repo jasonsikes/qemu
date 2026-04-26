@@ -1,0 +1,8 @@
+config MC6821
+    bool
+
+config COCO3
+    bool
+    default y
+    depends on M6809
+    select MC6821
