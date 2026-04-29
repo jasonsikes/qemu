@@ -6,3 +6,4 @@ config COCO3
     default y
     depends on M6809
     select MC6821
+    select FRAMEBUFFER

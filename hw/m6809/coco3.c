@@ -24,6 +24,7 @@
 #include "system/blockdev.h"
 #include "system/system.h"
 #include "coco3.h"
+#include "coco3_video.h"
 #include "boot.h"
 
 /* CoCo ROM typically occupies the upper 32 KiB of the 64 KiB address space. */
@@ -330,6 +331,7 @@ static void coco3_frame_tick(void *opaque)
 
     s->gime_pending |= GIME_IRQ_VBORD;
     coco3_gime_update_irqs(s);
+    coco3_video_invalidate(s);
     if (s->fake_cart_firq) {
         qemu_irq_raise(s->cart);
         qemu_irq_lower(s->cart);
@@ -446,6 +448,8 @@ static void coco3_realize(DeviceState *dev, Error **errp)
                                         sysbus_mmio_get_region(
                                             SYS_BUS_DEVICE(&s->vdisk), 0),
                                         COCO3_IO_PRIORITY);
+
+    coco3_video_init(s);
 
     s->cart = qdev_get_gpio_in_named(DEVICE(&s->pia1), "CB1", 0);
     s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, coco3_frame_tick, s);

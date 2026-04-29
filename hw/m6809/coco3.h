@@ -92,6 +92,9 @@ struct Coco3State {
     QEMUTimer *frame_timer;
     qemu_irq cart;
     bool fake_cart_firq;
+
+    QemuConsole *con;
+    bool video_dirty;
 };
 
 #endif /* HW_M6809_COCO3_H */
