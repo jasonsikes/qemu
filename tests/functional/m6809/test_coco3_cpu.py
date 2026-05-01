@@ -292,6 +292,69 @@ class Coco3MachineTest(QemuSystemTest):
             listener.close()
             vm.shutdown()
 
+    def test_gime_bitmap(self):
+        # 320×192×16 (VMODE BP, VRES LPF=192 HRES=160B CRES=16).
+        # MMU off: CPU $0000 is physical $70000, so $FF9D:$FF9E = $E000.
+        code = (b'\x86\x00\xb7\xff\xb0'
+                b'\x86\x20\xb7\xff\xb1'
+                b'\x86\xe0\xb7\xff\x9d'
+                b'\x86\x00\xb7\xff\x9e'
+                b'\x86\x80\xb7\xff\x98'
+                b'\x86\x1e\xb7\xff\x99'
+                b'\x86\x01\xb7\x00\x00'
+                b'\x86\x10\xb7\x00\xa0'
+                b'\xb6\xff\x98\xf6\xff\xb1')
+        path = self.scratch_file('gime_bitmap.rom')
+        with open(path, 'wb') as stream:
+            stream.write(build_rom(code + BRA_SELF))
+        dump_path = self.scratch_file('gime_bitmap.ppm')
+        vm = self.get_vm(name='gime_bitmap')
+        vm.add_args('-bios', path, '-display', 'none',
+                    '-accel', 'tcg,one-insn-per-tb=on')
+        vm.launch()
+        try:
+            try:
+                registers = wait_info_registers(
+                    vm, f'PC={ROM_BASE + len(code):04x}',
+                    timeout=self.timeout)
+            except TimeoutError as err:
+                self.fail(f'gime_bitmap: timed out\n{err}')
+            self.assertIn('A=80', registers)
+            self.assertIn('B=20', registers)
+            dump = vm.cmd('human-monitor-command',
+                          command_line='x/1xb 0x0000')
+            self.assertEqual([0x01], mem_bytes(dump), dump)
+            dump = vm.cmd('human-monitor-command',
+                          command_line='x/1xb 0x00a0')
+            self.assertEqual([0x10], mem_bytes(dump), dump)
+            vm.cmd('screendump', filename=dump_path)
+        finally:
+            vm.shutdown()
+
+        with open(dump_path, 'rb') as stream:
+            magic = stream.readline()
+            self.assertEqual(magic.strip(), b'P6')
+            size = stream.readline()
+            while size.startswith(b'#'):
+                size = stream.readline()
+            width, height = (int(v) for v in size.split())
+            self.assertEqual((width, height), (640, 240))
+            self.assertEqual(stream.readline().strip(), b'255')
+            pixels = stream.read()
+        self.assertEqual(len(pixels), 640 * 240 * 3)
+
+        def rgb(x, y):
+            i = (y * 640 + x) * 3
+            return tuple(pixels[i:i + 3])
+
+        # 320×192 is centered in the 640×240 window.
+        x0, y0 = (640 - 320) // 2, (240 - 192) // 2
+        self.assertEqual(rgb(0, 0), (0x00, 0x00, 0x00))
+        self.assertEqual(rgb(x0, y0), (0x00, 0x00, 0x00))
+        self.assertEqual(rgb(x0 + 1, y0), (0xaa, 0x00, 0x00))
+        self.assertEqual(rgb(x0, y0 + 1), (0xaa, 0x00, 0x00))
+        self.assertEqual(rgb(x0 + 1, y0 + 1), (0x00, 0x00, 0x00))
+
 
 if __name__ == '__main__':
     QemuSystemTest.main()

@@ -13,6 +13,8 @@ The ``coco3`` machine includes:
 - Two MC6821 PIAs at ``$FF00`` and ``$FF20``
 - Virt console at ``$FF10`` (first ``-serial``)
 - Virt disk at ``$FF30`` (first ``-drive``)
+- Graphic console: fixed 640×240 window; GIME 320×192×16 is letterboxed
+  (``$FF98``/``$FF99``/palette)
 - 60 Hz GIME vertical border interrupt
 
 ``-kernel`` loads a boot track at ``$2600`` and starts at ``$2602``.

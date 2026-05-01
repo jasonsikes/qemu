@@ -211,11 +211,21 @@ static void coco3_gime_reset(Coco3State *s)
     s->gime_firen = 0;
     s->gime_pending = 0;
     s->sam_ty = false;
+    s->vmode = 0;
+    s->vres = 0;
+    s->border = 0;
+    s->vbank = 0;
+    s->vscroll = 0;
+    s->voff_msb = 0;
+    s->voff_lsb = 0;
+    s->hoff = 0;
+    memset(s->palette, 0, sizeof(s->palette));
     for (i = 0; i < GIME_PAGE_COUNT; i++) {
         s->mmu[i] = s->mmu[i + GIME_PAGE_COUNT] = GIME_RESET_BASE_BLOCK + i;
     }
     coco3_mmu_update_all(s);
     coco3_gime_update_irqs(s);
+    coco3_video_reset(s);
 }
 
 static uint8_t coco3_gime_ack(Coco3State *s, uint8_t enable)
@@ -236,6 +246,12 @@ static uint64_t coco3_gime_read(void *opaque, hwaddr addr, unsigned size)
         return s->mmu[addr - GIME_R_MMU] & GIME_MMU_BLOCK_MASK;
     }
 
+    /* $FFB0-$FFBF: palette. Upper two bits are undefined. */
+    if (addr >= GIME_R_PALETTE &&
+        addr < GIME_R_PALETTE + GIME_PALETTE_COUNT) {
+        return s->palette[addr - GIME_R_PALETTE] & GIME_COLOR_MASK;
+    }
+
     switch (addr) {
     case GIME_R_INIT0:
         return s->init0;
@@ -246,6 +262,22 @@ static uint64_t coco3_gime_read(void *opaque, hwaddr addr, unsigned size)
         return coco3_gime_ack(s, s->gime_irqen);
     case GIME_R_FIREN:
         return coco3_gime_ack(s, s->gime_firen);
+    case GIME_R_VMODE:
+        return s->vmode;
+    case GIME_R_VRES:
+        return s->vres;
+    case GIME_R_BORDER:
+        return s->border & GIME_COLOR_MASK;
+    case GIME_R_VBANK:
+        return s->vbank;
+    case GIME_R_VSCROLL:
+        return s->vscroll;
+    case GIME_R_VOFF_MSB:
+        return s->voff_msb;
+    case GIME_R_VOFF_LSB:
+        return s->voff_lsb;
+    case GIME_R_HOFF:
+        return s->hoff;
     default:
         return 0;
     }
@@ -270,6 +302,12 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
         return;
     }
 
+    if (addr >= GIME_R_PALETTE &&
+        addr < GIME_R_PALETTE + GIME_PALETTE_COUNT) {
+        coco3_video_set_palette(s, addr - GIME_R_PALETTE, data);
+        return;
+    }
+
     if (addr >= GIME_R_MMU && addr < GIME_R_MMU + GIME_MMU_REGS) {
         int slot = addr - GIME_R_MMU;
         uint8_t block = data & GIME_MMU_BLOCK_MASK;
@@ -287,10 +325,14 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
             uint8_t old = s->init0;
 
             s->init0 = data;
-            if ((old ^ data) & ~(GIME_INIT0_IEN | GIME_INIT0_FEN)) {
+            if ((old ^ data) & ~(GIME_INIT0_IEN | GIME_INIT0_FEN |
+                                 GIME_INIT0_COCO)) {
                 coco3_mmu_update_all(s);
             }
             coco3_gime_update_irqs(s);
+            if ((old ^ data) & GIME_INIT0_COCO) {
+                coco3_video_invalidate(s);
+            }
         }
         break;
     case GIME_R_INIT1:
@@ -308,6 +350,37 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
     case GIME_R_FIREN:
         s->gime_firen = data;
         coco3_gime_update_irqs(s);
+        break;
+    case GIME_R_VMODE:
+        s->vmode = data;
+        coco3_video_invalidate(s);
+        break;
+    case GIME_R_VRES:
+        s->vres = data;
+        coco3_video_invalidate(s);
+        break;
+    case GIME_R_BORDER:
+        s->border = data & GIME_COLOR_MASK;
+        coco3_video_invalidate(s);
+        break;
+    case GIME_R_VBANK:
+        s->vbank = data;
+        break;
+    case GIME_R_VSCROLL:
+        s->vscroll = data;
+        coco3_video_invalidate(s);
+        break;
+    case GIME_R_VOFF_MSB:
+        s->voff_msb = data;
+        coco3_video_invalidate(s);
+        break;
+    case GIME_R_VOFF_LSB:
+        s->voff_lsb = data;
+        coco3_video_invalidate(s);
+        break;
+    case GIME_R_HOFF:
+        s->hoff = data;
+        coco3_video_invalidate(s);
         break;
     default:
         break;
@@ -488,6 +561,7 @@ static int coco3_post_load(void *opaque, int version_id)
 
     coco3_mmu_update_all(s);
     coco3_gime_update_irqs(s);
+    coco3_video_reset(s);
     qemu_set_irq(s->cpu_irq, s->irq_level[0] | s->irq_level[1]);
     qemu_set_irq(s->cpu_firq, s->firq_level[0] | s->firq_level[1]);
     return 0;
@@ -495,8 +569,8 @@ static int coco3_post_load(void *opaque, int version_id)
 
 static const VMStateDescription coco3_vmstate = {
     .name = TYPE_COCO3,
-    .version_id = 3,
-    .minimum_version_id = 3,
+    .version_id = 4,
+    .minimum_version_id = 4,
     .post_load = coco3_post_load,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT8(init0, Coco3State),
@@ -512,6 +586,15 @@ static const VMStateDescription coco3_vmstate = {
         VMSTATE_UINT8_ARRAY(irq_level, Coco3State, 2),
         VMSTATE_UINT8_ARRAY(firq_level, Coco3State, 2),
         VMSTATE_TIMER_PTR(frame_timer, Coco3State),
+        VMSTATE_UINT8(vmode, Coco3State),
+        VMSTATE_UINT8(vres, Coco3State),
+        VMSTATE_UINT8(border, Coco3State),
+        VMSTATE_UINT8(vbank, Coco3State),
+        VMSTATE_UINT8(vscroll, Coco3State),
+        VMSTATE_UINT8(voff_msb, Coco3State),
+        VMSTATE_UINT8(voff_lsb, Coco3State),
+        VMSTATE_UINT8(hoff, Coco3State),
+        VMSTATE_UINT8_ARRAY(palette, Coco3State, GIME_PALETTE_COUNT),
         VMSTATE_END_OF_LIST()
     }
 };

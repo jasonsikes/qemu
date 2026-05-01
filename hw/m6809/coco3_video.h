@@ -17,6 +17,8 @@
 #define COCO3_DISPLAY_HEIGHT 240
 
 void coco3_video_init(Coco3State *s);
+void coco3_video_reset(Coco3State *s);
 void coco3_video_invalidate(Coco3State *s);
+void coco3_video_set_palette(Coco3State *s, unsigned idx, uint8_t val);
 
 #endif /* HW_M6809_COCO3_VIDEO_H */

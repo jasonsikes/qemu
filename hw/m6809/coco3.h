@@ -39,15 +39,37 @@ DECLARE_INSTANCE_CHECKER(Coco3State, COCO3, TYPE_COCO3)
 #define GIME_INIT0_FEN          0x10
 #define GIME_INIT0_IEN          0x20
 #define GIME_INIT0_MMUEN        0x40
+#define GIME_INIT0_COCO         0x80 /* 1 = VDG/SAM video, 0 = GIME */
 #define GIME_INIT1_TR           0x01
 #define GIME_IRQ_VBORD          0x08
+
+#define GIME_VMODE_LPR          0x07
+#define GIME_VMODE_H50          0x08
+#define GIME_VMODE_MOCH         0x10
+#define GIME_VMODE_BPI          0x20
+#define GIME_VMODE_BP           0x80 /* 1 = graphics, 0 = text */
+#define GIME_VRES_CRES          0x03
+#define GIME_VRES_HRES          0x1c
+#define GIME_VRES_LPF           0x60
+#define GIME_HOFF_HVEN          0x80
+#define GIME_PALETTE_COUNT      16
+#define GIME_COLOR_MASK         0x3f
 
 /* Offsets within the $FF90 GIME window. */
 #define GIME_R_INIT0            0x00
 #define GIME_R_INIT1            0x01
 #define GIME_R_IRQEN            0x02
 #define GIME_R_FIREN            0x03
+#define GIME_R_VMODE            0x08
+#define GIME_R_VRES             0x09
+#define GIME_R_BORDER           0x0a
+#define GIME_R_VBANK            0x0b
+#define GIME_R_VSCROLL          0x0c
+#define GIME_R_VOFF_MSB         0x0d
+#define GIME_R_VOFF_LSB         0x0e
+#define GIME_R_HOFF             0x0f
 #define GIME_R_MMU              0x10
+#define GIME_R_PALETTE          0x20
 #define GIME_R_SAM              0x30
 #define GIME_R_SAM_TY           0x4e
 
@@ -95,6 +117,18 @@ struct Coco3State {
 
     QemuConsole *con;
     bool video_dirty;
+    bool video_unimp_logged;
+
+    uint8_t vmode;
+    uint8_t vres;
+    uint8_t border;
+    uint8_t vbank;
+    uint8_t vscroll;
+    uint8_t voff_msb;
+    uint8_t voff_lsb;
+    uint8_t hoff;
+    uint8_t palette[GIME_PALETTE_COUNT];
+    uint32_t palette_rgb[GIME_PALETTE_COUNT];
 };
 
 #endif /* HW_M6809_COCO3_H */
