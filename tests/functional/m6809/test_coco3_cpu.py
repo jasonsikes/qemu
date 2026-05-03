@@ -355,6 +355,93 @@ class Coco3MachineTest(QemuSystemTest):
         self.assertEqual(rgb(x0, y0 + 1), (0xaa, 0x00, 0x00))
         self.assertEqual(rgb(x0 + 1, y0 + 1), (0x00, 0x00, 0x00))
 
+    def test_gime_text(self):
+        # 80- and 40-column GIME text, LPR=8, attributes, video at $70000.
+        # "OK" plus an underlined space; fg palette 8 is red, bg palette 0 black.
+        font_o = (0x1c, 0x36, 0x63, 0x63, 0x63, 0x36, 0x1c, 0x00)
+        font_k = (0x67, 0x66, 0x36, 0x1e, 0x36, 0x66, 0x67, 0x00)
+        red, black = (0xaa, 0x00, 0x00), (0x00, 0x00, 0x00)
+        setup = (b'\x86\x00\xb7\xff\xb0'
+                 b'\x86\x20\xb7\xff\xb8'
+                 b'\x86\xe0\xb7\xff\x9d'
+                 b'\x86\x00\xb7\xff\x9e'
+                 b'\x86\x03\xb7\xff\x98'
+                 b'\x86\x4f\xb7\x00\x00'
+                 b'\x86\x00\xb7\x00\x01'
+                 b'\x86\x4b\xb7\x00\x02'
+                 b'\x86\x00\xb7\x00\x03'
+                 b'\x86\x20\xb7\x00\x04'
+                 b'\x86\x40\xb7\x00\x05')
+
+        def ppm_rgb(path):
+            with open(path, 'rb') as stream:
+                magic = stream.readline()
+                self.assertEqual(magic.strip(), b'P6')
+                size = stream.readline()
+                while size.startswith(b'#'):
+                    size = stream.readline()
+                width, height = (int(v) for v in size.split())
+                self.assertEqual((width, height), (640, 240))
+                self.assertEqual(stream.readline().strip(), b'255')
+                pixels = stream.read()
+            self.assertEqual(len(pixels), 640 * 240 * 3)
+
+            def rgb(x, y):
+                i = (y * 640 + x) * 3
+                return tuple(pixels[i:i + 3])
+
+            return rgb
+
+        def run_text(name, vres, xscale):
+            code = setup + bytes((0x86, vres, 0xb7, 0xff, 0x99))
+            path = self.scratch_file(f'{name}.rom')
+            with open(path, 'wb') as stream:
+                stream.write(build_rom(code + BRA_SELF))
+            dump_path = self.scratch_file(f'{name}.ppm')
+            vm = self.get_vm(name=name)
+            vm.add_args('-bios', path, '-display', 'none',
+                        '-accel', 'tcg,one-insn-per-tb=on')
+            vm.launch()
+            try:
+                try:
+                    wait_info_registers(
+                        vm, f'PC={ROM_BASE + len(code):04x}',
+                        timeout=self.timeout)
+                except TimeoutError as err:
+                    self.fail(f'{name}: timed out\n{err}')
+                dump = vm.cmd('human-monitor-command',
+                              command_line='x/6xb 0x0000')
+                self.assertEqual([0x4f, 0x00, 0x4b, 0x00, 0x20, 0x40],
+                                 mem_bytes(dump), dump)
+                vm.cmd('screendump', filename=dump_path)
+            finally:
+                vm.shutdown()
+
+            rgb = ppm_rgb(dump_path)
+            y0 = (240 - 192) // 2
+            self.assertEqual(rgb(0, 0), black)
+            cell = 8 * xscale
+            for row in range(8):
+                for bit in range(8):
+                    expect = red if (font_o[row] >> bit) & 1 else black
+                    x = bit * xscale
+                    self.assertEqual(rgb(x, y0 + row), expect,
+                                     f'{name}: O row {row} bit {bit}')
+                    expect = red if (font_k[row] >> bit) & 1 else black
+                    x = cell + bit * xscale
+                    self.assertEqual(rgb(x, y0 + row), expect,
+                                     f'{name}: K row {row} bit {bit}')
+            # Underlined space: last scan of the cell is foreground.
+            for bit in range(8):
+                x = 2 * cell + bit * xscale
+                self.assertEqual(rgb(x, y0 + 6), black, f'{name}: ul row 6')
+                self.assertEqual(rgb(x, y0 + 7), red, f'{name}: ul row 7')
+
+        with self.subTest('col80'):
+            run_text('gime_text_80', 0x15, 1)
+        with self.subTest('col40'):
+            run_text('gime_text_40', 0x05, 2)
+
 
 if __name__ == '__main__':
     QemuSystemTest.main()

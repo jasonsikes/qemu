@@ -49,9 +49,14 @@ DECLARE_INSTANCE_CHECKER(Coco3State, COCO3, TYPE_COCO3)
 #define GIME_VMODE_BPI          0x20
 #define GIME_VMODE_BP           0x80 /* 1 = graphics, 0 = text */
 #define GIME_VRES_CRES          0x03
+#define GIME_VRES_CRES_ATTR     0x01 /* text: character+attribute pairs */
 #define GIME_VRES_HRES          0x1c
+#define GIME_VRES_HRES_TEXT     0x14 /* text uses HRES bits 4 and 2 */
 #define GIME_VRES_LPF           0x60
 #define GIME_HOFF_HVEN          0x80
+#define GIME_ATTR_UNDERLINE     0x40
+#define GIME_ATTR_FG            0x38
+#define GIME_ATTR_BG            0x07
 #define GIME_PALETTE_COUNT      16
 #define GIME_COLOR_MASK         0x3f
 
