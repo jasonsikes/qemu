@@ -46,6 +46,51 @@ static uint8_t mc6821_port_level(const MC6821Port *port)
     return (port->data & port->ddr) | (port->in & ~port->ddr);
 }
 
+static void mc6821_port_set_out(qemu_irq *out, const MC6821Port *port)
+{
+    uint8_t level = mc6821_port_level(port);
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        qemu_set_irq(out[i], (level >> i) & 1);
+    }
+}
+
+static void mc6821_update_out(MC6821State *s)
+{
+    mc6821_port_set_out(s->a_out, &s->a);
+    mc6821_port_set_out(s->b_out, &s->b);
+}
+
+void mc6821_set_port_in(MC6821State *s, bool port_b, uint8_t value)
+{
+    MC6821Port *port = port_b ? &s->b : &s->a;
+
+    port->in = value;
+}
+
+static void mc6821_pa_in(void *opaque, int n, int level)
+{
+    MC6821State *s = opaque;
+
+    if (level) {
+        s->a.in |= 1u << n;
+    } else {
+        s->a.in &= ~(1u << n);
+    }
+}
+
+static void mc6821_pb_in(void *opaque, int n, int level)
+{
+    MC6821State *s = opaque;
+
+    if (level) {
+        s->b.in |= 1u << n;
+    } else {
+        s->b.in &= ~(1u << n);
+    }
+}
+
 static uint64_t mc6821_read(void *opaque, hwaddr addr, unsigned size)
 {
     MC6821State *s = opaque;
@@ -83,6 +128,7 @@ static void mc6821_write(void *opaque, hwaddr addr, uint64_t val,
     } else {
         port->ddr = val;
     }
+    mc6821_update_out(s);
 }
 
 static const MemoryRegionOps mc6821_ops = {
@@ -133,6 +179,7 @@ static void mc6821_reset_hold(Object *obj, ResetType type)
     s->a = (MC6821Port){ };
     s->b = (MC6821Port){ };
     qemu_set_irq(s->irq, false);
+    mc6821_update_out(s);
 }
 
 static void mc6821_init(Object *obj)
@@ -147,6 +194,10 @@ static void mc6821_init(Object *obj)
 
     qdev_init_gpio_in_named(DEVICE(obj), mc6821_ca1, "CA1", 1);
     qdev_init_gpio_in_named(DEVICE(obj), mc6821_cb1, "CB1", 1);
+    qdev_init_gpio_in_named(DEVICE(obj), mc6821_pa_in, MC6821_GPIO_PA_IN, 8);
+    qdev_init_gpio_in_named(DEVICE(obj), mc6821_pb_in, MC6821_GPIO_PB_IN, 8);
+    qdev_init_gpio_out_named(DEVICE(obj), s->a_out, MC6821_GPIO_PA, 8);
+    qdev_init_gpio_out_named(DEVICE(obj), s->b_out, MC6821_GPIO_PB, 8);
 }
 
 static const VMStateDescription vmstate_mc6821_port = {
@@ -163,10 +214,17 @@ static const VMStateDescription vmstate_mc6821_port = {
     }
 };
 
+static int mc6821_post_load(void *opaque, int version_id)
+{
+    mc6821_update_out(opaque);
+    return 0;
+}
+
 static const VMStateDescription vmstate_mc6821 = {
     .name = TYPE_MC6821,
     .version_id = 1,
     .minimum_version_id = 1,
+    .post_load = mc6821_post_load,
     .fields = (const VMStateField[]) {
         VMSTATE_STRUCT(a, MC6821State, 1, vmstate_mc6821_port, MC6821Port),
         VMSTATE_STRUCT(b, MC6821State, 1, vmstate_mc6821_port, MC6821Port),

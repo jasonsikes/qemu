@@ -20,6 +20,8 @@
 #include "virt_disk.h"
 #include "virt_cons.h"
 
+typedef struct QemuInputHandlerState QemuInputHandlerState;
+
 #define TYPE_COCO3 "coco3"
 
 typedef struct Coco3State Coco3State;
@@ -134,6 +136,10 @@ struct Coco3State {
     uint8_t hoff;
     uint8_t palette[GIME_PALETTE_COUNT];
     uint32_t palette_rgb[GIME_PALETTE_COUNT];
+
+    QemuInputHandlerState *kbd_hs;
+    uint64_t kb_pressed[2];
+    uint8_t kb_matrix[8];
 };
 
 #endif /* HW_M6809_COCO3_H */

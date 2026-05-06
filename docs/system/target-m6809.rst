@@ -11,6 +11,7 @@ The ``coco3`` machine includes:
 - Motorola 6809 CPU
 - 512 KiB RAM (fixed) and GIME MMU (eight 8 KiB pages)
 - Two MC6821 PIAs at ``$FF00`` and ``$FF20``
+- Keyboard matrix on PIA0 (host keys; Break is Esc)
 - Virt console at ``$FF10`` (first ``-serial``)
 - Virt disk at ``$FF30`` (first ``-drive``)
 - Graphic console: fixed 640×240 window; GIME 320×192×16 and 40/80-column

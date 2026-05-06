@@ -144,7 +144,7 @@ qtests_alpha = ['boot-serial-test'] + \
 
 qtests_avr = [ 'boot-serial-test' ]
 
-qtests_m6809 = [ 'm6809-cpu-test' ]
+qtests_m6809 = [ 'm6809-cpu-test', 'coco3-test' ]
 
 qtests_hppa = \
   qtests_filter + \

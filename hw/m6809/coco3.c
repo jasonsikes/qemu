@@ -23,6 +23,8 @@
 #include "qom/object.h"
 #include "system/blockdev.h"
 #include "system/system.h"
+#include "ui/input.h"
+#include "standard-headers/linux/input-event-codes.h"
 #include "coco3.h"
 #include "coco3_video.h"
 #include "boot.h"
@@ -397,6 +399,128 @@ static const MemoryRegionOps coco3_gime_ops = {
     .endianness = DEVICE_BIG_ENDIAN,
 };
 
+/*
+ * CoCo 3 keyboard (MAME coco3_keyboard). PIA0 PB bits are column strobes
+ * (outputs, active low); PA0–PA6 are row inputs (active low). PA7 is the
+ * DAC comparator and stays pulled up until a joystick is modelled.
+ *
+ *        PB0 PB1 PB2 PB3 PB4 PB5 PB6 PB7
+ *  PA6:  Ent Clr Brk Alt Ctr F1  F2  Shift
+ *  PA5:  8   9   :   ;   ,   -   .   /
+ *  PA4:  0   1   2   3   4   5   6   7
+ *  PA3:  X   Y   Z   Up  Dwn Lft Rgt Space
+ *  PA2:  P   Q   R   S   T   U   V   W
+ *  PA1:  H   I   J   K   L   M   N   O
+ *  PA0:  @   A   B   C   D   E   F   G
+ */
+typedef struct Coco3KeyMap {
+    unsigned int lnx;
+    uint8_t col;
+    uint8_t row;
+} Coco3KeyMap;
+
+static const Coco3KeyMap coco3_keymap[] = {
+    { KEY_LEFTBRACE,  0, 0 }, { KEY_A, 1, 0 }, { KEY_B, 2, 0 },
+    { KEY_C, 3, 0 }, { KEY_D, 4, 0 }, { KEY_E, 5, 0 },
+    { KEY_F, 6, 0 }, { KEY_G, 7, 0 },
+    { KEY_H, 0, 1 }, { KEY_I, 1, 1 }, { KEY_J, 2, 1 },
+    { KEY_K, 3, 1 }, { KEY_L, 4, 1 }, { KEY_M, 5, 1 },
+    { KEY_N, 6, 1 }, { KEY_O, 7, 1 },
+    { KEY_P, 0, 2 }, { KEY_Q, 1, 2 }, { KEY_R, 2, 2 },
+    { KEY_S, 3, 2 }, { KEY_T, 4, 2 }, { KEY_U, 5, 2 },
+    { KEY_V, 6, 2 }, { KEY_W, 7, 2 },
+    { KEY_X, 0, 3 }, { KEY_Y, 1, 3 }, { KEY_Z, 2, 3 },
+    { KEY_UP, 3, 3 }, { KEY_DOWN, 4, 3 },
+    { KEY_LEFT, 5, 3 }, { KEY_BACKSPACE, 5, 3 },
+    { KEY_RIGHT, 6, 3 }, { KEY_SPACE, 7, 3 },
+    { KEY_0, 0, 4 }, { KEY_1, 1, 4 }, { KEY_2, 2, 4 },
+    { KEY_3, 3, 4 }, { KEY_4, 4, 4 }, { KEY_5, 5, 4 },
+    { KEY_6, 6, 4 }, { KEY_7, 7, 4 },
+    { KEY_8, 0, 5 }, { KEY_9, 1, 5 },
+    { KEY_MINUS, 2, 5 }, { KEY_SEMICOLON, 3, 5 },
+    { KEY_COMMA, 4, 5 }, { KEY_EQUAL, 5, 5 },
+    { KEY_DOT, 6, 5 }, { KEY_SLASH, 7, 5 },
+    { KEY_ENTER, 0, 6 }, { KEY_HOME, 1, 6 },
+    { KEY_ESC, 2, 6 }, { KEY_END, 2, 6 },
+    { KEY_LEFTALT, 3, 6 }, { KEY_RIGHTALT, 3, 6 },
+    { KEY_LEFTCTRL, 4, 6 }, { KEY_RIGHTCTRL, 4, 6 },
+    { KEY_F1, 5, 6 }, { KEY_F2, 6, 6 },
+    { KEY_LEFTSHIFT, 7, 6 }, { KEY_RIGHTSHIFT, 7, 6 },
+};
+
+static void coco3_keyboard_rebuild(Coco3State *s)
+{
+    size_t i;
+
+    memset(s->kb_matrix, 0, sizeof(s->kb_matrix));
+    for (i = 0; i < ARRAY_SIZE(coco3_keymap); i++) {
+        unsigned int lnx = coco3_keymap[i].lnx;
+
+        if (s->kb_pressed[lnx / 64] & (1ULL << (lnx % 64))) {
+            s->kb_matrix[coco3_keymap[i].col] |= 1u << coco3_keymap[i].row;
+        }
+    }
+}
+
+static void coco3_keyboard_scan(Coco3State *s)
+{
+    /* Undriven PB pins are pulled up, so they do not select a column. */
+    uint8_t cols = s->pia0.b.data | (uint8_t)~s->pia0.b.ddr;
+    uint8_t rows = 0x7f;
+    int col;
+
+    for (col = 0; col < 8; col++) {
+        if (!(cols & (1u << col))) {
+            rows &= ~s->kb_matrix[col];
+        }
+    }
+    mc6821_set_port_in(&s->pia0, false, rows | 0x80);
+}
+
+static void coco3_keyboard_column(void *opaque, int n G_GNUC_UNUSED,
+                                  int level G_GNUC_UNUSED)
+{
+    coco3_keyboard_scan(opaque);
+}
+
+static void coco3_keyboard_event(DeviceState *dev,
+                                 QemuConsole *src G_GNUC_UNUSED,
+                                 InputEvent *evt)
+{
+    Coco3State *s = COCO3(dev);
+    InputKeyEvent *key = evt->u.key.data;
+    int qcode = qemu_input_key_value_to_qcode(key->key);
+    unsigned int lnx;
+
+    if (qcode >= qemu_input_map_qcode_to_linux_len) {
+        return;
+    }
+    lnx = qemu_input_map_qcode_to_linux[qcode];
+    if (lnx >= 128) {
+        return;
+    }
+    if (key->down) {
+        s->kb_pressed[lnx / 64] |= 1ULL << (lnx % 64);
+    } else {
+        s->kb_pressed[lnx / 64] &= ~(1ULL << (lnx % 64));
+    }
+    coco3_keyboard_rebuild(s);
+    coco3_keyboard_scan(s);
+}
+
+static const QemuInputHandler coco3_keyboard_handler = {
+    .name = "coco3-keyboard",
+    .mask = INPUT_EVENT_MASK_KEY,
+    .event = coco3_keyboard_event,
+};
+
+static void coco3_keyboard_reset(Coco3State *s)
+{
+    memset(s->kb_pressed, 0, sizeof(s->kb_pressed));
+    memset(s->kb_matrix, 0, sizeof(s->kb_matrix));
+    coco3_keyboard_scan(s);
+}
+
 /* 60 Hz VBORD. */
 static void coco3_frame_tick(void *opaque)
 {
@@ -484,6 +608,11 @@ static void coco3_realize(DeviceState *dev, Error **errp)
                                             SYS_BUS_DEVICE(&s->pia0), 0),
                                         COCO3_IO_PRIORITY);
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->pia0), 0, s->irq_src[0]);
+    for (i = 0; i < 8; i++) {
+        qdev_connect_gpio_out_named(DEVICE(&s->pia0), MC6821_GPIO_PB, i,
+                                    qdev_get_gpio_in_named(DEVICE(s),
+                                                           "kb-col", i));
+    }
 
     object_initialize_child(OBJECT(dev), "pia1", &s->pia1, TYPE_MC6821);
     sysbus_realize(SYS_BUS_DEVICE(&s->pia1), &error_abort);
@@ -524,12 +653,15 @@ static void coco3_realize(DeviceState *dev, Error **errp)
 
     coco3_video_init(s);
 
+    s->kbd_hs = qemu_input_handler_register(dev, &coco3_keyboard_handler);
+
     s->cart = qdev_get_gpio_in_named(DEVICE(&s->pia1), "CB1", 0);
     s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, coco3_frame_tick, s);
     timer_mod(s->frame_timer,
               qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + COCO3_FRAME_NS);
 
     coco3_gime_reset(s);
+    coco3_keyboard_reset(s);
 }
 
 static void coco3_reset_hold(Object *obj, ResetType type)
@@ -540,6 +672,7 @@ static void coco3_reset_hold(Object *obj, ResetType type)
     uint16_t rst;
 
     coco3_gime_reset(s);
+    coco3_keyboard_reset(s);
     cpu_reset(CPU(&s->cpu));
 
     /* -kernel: boot-track entry. -bios: RESET vector in the ROM. */
@@ -562,6 +695,8 @@ static int coco3_post_load(void *opaque, int version_id)
     coco3_mmu_update_all(s);
     coco3_gime_update_irqs(s);
     coco3_video_reset(s);
+    memset(s->kb_pressed, 0, sizeof(s->kb_pressed));
+    coco3_keyboard_scan(s);
     qemu_set_irq(s->cpu_irq, s->irq_level[0] | s->irq_level[1]);
     qemu_set_irq(s->cpu_firq, s->firq_level[0] | s->firq_level[1]);
     return 0;
@@ -569,8 +704,8 @@ static int coco3_post_load(void *opaque, int version_id)
 
 static const VMStateDescription coco3_vmstate = {
     .name = TYPE_COCO3,
-    .version_id = 4,
-    .minimum_version_id = 4,
+    .version_id = 5,
+    .minimum_version_id = 5,
     .post_load = coco3_post_load,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT8(init0, Coco3State),
@@ -595,6 +730,7 @@ static const VMStateDescription coco3_vmstate = {
         VMSTATE_UINT8(voff_lsb, Coco3State),
         VMSTATE_UINT8(hoff, Coco3State),
         VMSTATE_UINT8_ARRAY(palette, Coco3State, GIME_PALETTE_COUNT),
+        VMSTATE_UINT8_ARRAY(kb_matrix, Coco3State, 8),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -606,12 +742,25 @@ static const Property coco3_properties[] = {
                      MemoryRegion *),
 };
 
+static void coco3_unrealize(DeviceState *dev)
+{
+    Coco3State *s = COCO3(dev);
+
+    g_clear_pointer(&s->kbd_hs, qemu_input_handler_unregister);
+}
+
+static void coco3_instance_init(Object *obj)
+{
+    qdev_init_gpio_in_named(DEVICE(obj), coco3_keyboard_column, "kb-col", 8);
+}
+
 static void coco3_class_init(ObjectClass *oc, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
     ResettableClass *rc = RESETTABLE_CLASS(oc);
 
     dc->realize = coco3_realize;
+    dc->unrealize = coco3_unrealize;
     dc->user_creatable = false;
     dc->vmsd = &coco3_vmstate;
     device_class_set_props(dc, coco3_properties);
@@ -623,6 +772,7 @@ static const TypeInfo coco3_types[] = {
         .name = TYPE_COCO3,
         .parent = TYPE_SYS_BUS_DEVICE,
         .instance_size = sizeof(Coco3State),
+        .instance_init = coco3_instance_init,
         .class_init = coco3_class_init,
     }
 };
