@@ -80,6 +80,19 @@ DECLARE_INSTANCE_CHECKER(Coco3State, COCO3, TYPE_COCO3)
 #define GIME_R_SAM              0x30
 #define GIME_R_SAM_TY           0x4e
 
+/* PIA1 $FF22 VDG pins (MC6847 / GIME compat). */
+#define VDG_FF22_AG             0x80
+#define VDG_FF22_GM2            0x40
+#define VDG_FF22_GM1            0x20
+#define VDG_FF22_GM0            0x10
+#define VDG_FF22_CSS            0x08
+#define VDG_FF22_PMODE4         (VDG_FF22_AG | VDG_FF22_GM2 | \
+                                 VDG_FF22_GM1 | VDG_FF22_GM0)
+
+#define SAM_V_MASK              0x07
+#define SAM_V_PMODE4            0x06 /* V2 V1 V0 = 110: 256×192×2 */
+#define SAM_F_MASK              0x7f
+
 struct Coco3State {
     /*< private >*/
     SysBusDevice parent_obj;
@@ -116,6 +129,8 @@ struct Coco3State {
     uint8_t gime_pending;
     uint8_t mmu[GIME_MMU_REGS];
     bool sam_ty;                /* SAM TY: RAM at $3C-$3F */
+    uint8_t sam_v;              /* SAM V2–V0 */
+    uint8_t sam_f;              /* SAM F6–F0: display offset / 512 */
     bool os9_kernel;            /* -kernel: keep INIT0.MMUEN across reset */
 
     QEMUTimer *frame_timer;

@@ -207,12 +207,18 @@ static void coco3_gime_reset(Coco3State *s)
 {
     int i;
 
-    s->init0 = s->os9_kernel ? GIME_INIT0_MMUEN : 0;
+    /*
+     * -bios: VDG-compat like silicon so Color BASIC can paint $0400.
+     * -kernel: MMUEN; NitrOS-9 reprograms the GIME itself.
+     */
+    s->init0 = s->os9_kernel ? GIME_INIT0_MMUEN : GIME_INIT0_COCO;
     s->init1 = 0;
     s->gime_irqen = 0;
     s->gime_firen = 0;
     s->gime_pending = 0;
     s->sam_ty = false;
+    s->sam_v = 0;
+    s->sam_f = 0;
     s->vmode = 0;
     s->vres = 0;
     s->border = 0;
@@ -292,12 +298,29 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
     uint8_t data = val;
 
     if (addr >= GIME_R_SAM) {
-        /* SAM: even address clears the bit, odd sets it. Only TY matters. */
-        if ((addr & ~1) == GIME_R_SAM_TY) {
-            bool ty = addr & 1;
+        /* SAM: even address clears the bit, odd sets it. */
+        unsigned bit = (addr - GIME_R_SAM) >> 1;
+        bool set = addr & 1;
 
-            if (s->sam_ty != ty) {
-                s->sam_ty = ty;
+        if (bit <= 2) {
+            uint8_t mask = 1u << bit;
+            uint8_t v = set ? (s->sam_v | mask) : (s->sam_v & ~mask);
+
+            if (s->sam_v != v) {
+                s->sam_v = v;
+                coco3_video_invalidate(s);
+            }
+        } else if (bit >= 3 && bit <= 9) {
+            uint8_t mask = 1u << (bit - 3);
+            uint8_t f = set ? (s->sam_f | mask) : (s->sam_f & ~mask);
+
+            if (s->sam_f != f) {
+                s->sam_f = f;
+                coco3_video_invalidate(s);
+            }
+        } else if ((addr & ~1) == GIME_R_SAM_TY) {
+            if (s->sam_ty != set) {
+                s->sam_ty = set;
                 coco3_mmu_update_all(s);
             }
         }
@@ -483,6 +506,13 @@ static void coco3_keyboard_column(void *opaque, int n G_GNUC_UNUSED,
     coco3_keyboard_scan(opaque);
 }
 
+/* PIA1 PB is $FF22 (VDG A/G GM CSS). A write must dirty scanout. */
+static void coco3_vdg_mode(void *opaque, int n G_GNUC_UNUSED,
+                           int level G_GNUC_UNUSED)
+{
+    coco3_video_invalidate(opaque);
+}
+
 static void coco3_keyboard_event(DeviceState *dev,
                                  QemuConsole *src G_GNUC_UNUSED,
                                  InputEvent *evt)
@@ -652,6 +682,11 @@ static void coco3_realize(DeviceState *dev, Error **errp)
                                         COCO3_IO_PRIORITY);
 
     coco3_video_init(s);
+    for (i = 0; i < 8; i++) {
+        qdev_connect_gpio_out_named(DEVICE(&s->pia1), MC6821_GPIO_PB, i,
+                                    qdev_get_gpio_in_named(DEVICE(s),
+                                                           "vdg-mode", i));
+    }
 
     s->kbd_hs = qemu_input_handler_register(dev, &coco3_keyboard_handler);
 
@@ -704,14 +739,16 @@ static int coco3_post_load(void *opaque, int version_id)
 
 static const VMStateDescription coco3_vmstate = {
     .name = TYPE_COCO3,
-    .version_id = 5,
-    .minimum_version_id = 5,
+    .version_id = 6,
+    .minimum_version_id = 6,
     .post_load = coco3_post_load,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT8(init0, Coco3State),
         VMSTATE_UINT8(init1, Coco3State),
         VMSTATE_UINT8_ARRAY(mmu, Coco3State, GIME_MMU_REGS),
         VMSTATE_BOOL(sam_ty, Coco3State),
+        VMSTATE_UINT8(sam_v, Coco3State),
+        VMSTATE_UINT8(sam_f, Coco3State),
         VMSTATE_BOOL(fake_cart_firq, Coco3State),
         VMSTATE_UINT8(gime_irqen, Coco3State),
         VMSTATE_UINT8(gime_firen, Coco3State),
@@ -752,6 +789,7 @@ static void coco3_unrealize(DeviceState *dev)
 static void coco3_instance_init(Object *obj)
 {
     qdev_init_gpio_in_named(DEVICE(obj), coco3_keyboard_column, "kb-col", 8);
+    qdev_init_gpio_in_named(DEVICE(obj), coco3_vdg_mode, "vdg-mode", 8);
 }
 
 static void coco3_class_init(ObjectClass *oc, const void *data)

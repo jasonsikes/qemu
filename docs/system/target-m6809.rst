@@ -14,8 +14,10 @@ The ``coco3`` machine includes:
 - Keyboard matrix on PIA0 (host keys; Break is Esc)
 - Virt console at ``$FF10`` (first ``-serial``)
 - Virt disk at ``$FF30`` (first ``-drive``)
-- Graphic console: fixed 640×240 window; GIME 320×192×16 and 40/80-column
-  text (8×8 glyphs) are letterboxed (``$FF98``/``$FF99``/palette)
+- Graphic console: fixed 640×240 window. GIME 320×192×16 and 40/80-column
+  text (8×8 glyphs). With ``INIT0.COCO`` (set on ``-bios``
+  reset), VDG-compat 32×16 text and PMODE 4 (256×192×2) use SAM F0–F6 /
+  V0–V2 and PIA1 ``$FF22``.
 - 60 Hz GIME vertical border interrupt
 
 ``-kernel`` loads a boot track at ``$2600`` and starts at ``$2602``.

@@ -295,7 +295,9 @@ class Coco3MachineTest(QemuSystemTest):
     def test_gime_bitmap(self):
         # 320×192×16 (VMODE BP, VRES LPF=192 HRES=160B CRES=16).
         # MMU off: CPU $0000 is physical $70000, so $FF9D:$FF9E = $E000.
-        code = (b'\x86\x00\xb7\xff\xb0'
+        # -bios reset sets INIT0.COCO; clear it for GIME scanout.
+        code = (b'\x86\x00\xb7\xff\x90'
+                b'\x86\x00\xb7\xff\xb0'
                 b'\x86\x20\xb7\xff\xb1'
                 b'\x86\xe0\xb7\xff\x9d'
                 b'\x86\x00\xb7\xff\x9e'
@@ -361,7 +363,8 @@ class Coco3MachineTest(QemuSystemTest):
         font_o = (0x1c, 0x36, 0x63, 0x63, 0x63, 0x36, 0x1c, 0x00)
         font_k = (0x67, 0x66, 0x36, 0x1e, 0x36, 0x66, 0x67, 0x00)
         red, black = (0xaa, 0x00, 0x00), (0x00, 0x00, 0x00)
-        setup = (b'\x86\x00\xb7\xff\xb0'
+        setup = (b'\x86\x00\xb7\xff\x90'
+                 b'\x86\x00\xb7\xff\xb0'
                  b'\x86\x20\xb7\xff\xb8'
                  b'\x86\xe0\xb7\xff\x9d'
                  b'\x86\x00\xb7\xff\x9e'
@@ -441,6 +444,132 @@ class Coco3MachineTest(QemuSystemTest):
             run_text('gime_text_80', 0x15, 1)
         with self.subTest('col40'):
             run_text('gime_text_40', 0x05, 2)
+
+    def test_vdg_text(self):
+        # INIT0.COCO, SAM V=0, F=2 ($0400), $FF9D=$E0 → CPU $0400.
+        # VDG "OK" (codes $0F/$0B); palette 12/13 black/red; 8×12 cells.
+        font_o = (0x1c, 0x36, 0x63, 0x63, 0x63, 0x36, 0x1c, 0x00)
+        font_k = (0x67, 0x66, 0x36, 0x1e, 0x36, 0x66, 0x67, 0x00)
+        red, black = (0xaa, 0x00, 0x00), (0x00, 0x00, 0x00)
+        code = (b'\xb6\xff\x90\x1f\x89'
+                b'\x86\x00\xb7\xff\xbc'
+                b'\x86\x20\xb7\xff\xbd'
+                b'\x86\xe0\xb7\xff\x9d'
+                b'\xb7\xff\xc9'
+                b'\x86\x80\xb7\xff\x90'
+                b'\x86\x0f\xb7\x04\x00'
+                b'\x86\x0b\xb7\x04\x01')
+        path = self.scratch_file('vdg_text.rom')
+        with open(path, 'wb') as stream:
+            stream.write(build_rom(code + BRA_SELF))
+        dump_path = self.scratch_file('vdg_text.ppm')
+        vm = self.get_vm(name='vdg_text')
+        vm.add_args('-bios', path, '-display', 'none',
+                    '-accel', 'tcg,one-insn-per-tb=on')
+        vm.launch()
+        try:
+            try:
+                registers = wait_info_registers(
+                    vm, f'PC={ROM_BASE + len(code):04x}',
+                    timeout=self.timeout)
+            except TimeoutError as err:
+                self.fail(f'vdg_text: timed out\n{err}')
+            self.assertIn('B=80', registers)
+            dump = vm.cmd('human-monitor-command',
+                          command_line='x/2xb 0x0400')
+            self.assertEqual([0x0f, 0x0b], mem_bytes(dump), dump)
+            vm.cmd('screendump', filename=dump_path)
+        finally:
+            vm.shutdown()
+
+        with open(dump_path, 'rb') as stream:
+            self.assertEqual(stream.readline().strip(), b'P6')
+            size = stream.readline()
+            while size.startswith(b'#'):
+                size = stream.readline()
+            width, height = (int(v) for v in size.split())
+            self.assertEqual((width, height), (640, 240))
+            self.assertEqual(stream.readline().strip(), b'255')
+            pixels = stream.read()
+        self.assertEqual(len(pixels), 640 * 240 * 3)
+
+        def rgb(x, y):
+            i = (y * 640 + x) * 3
+            return tuple(pixels[i:i + 3])
+
+        x0, y0 = (640 - 512) // 2, (240 - 192) // 2
+        self.assertEqual(rgb(0, 0), black)
+        for row in range(8):
+            for bit in range(8):
+                expect = red if (font_o[row] >> bit) & 1 else black
+                self.assertEqual(rgb(x0 + bit * 2, y0 + 1 + row), expect,
+                                 f'O row {row} bit {bit}')
+                expect = red if (font_k[row] >> bit) & 1 else black
+                self.assertEqual(rgb(x0 + 16 + bit * 2, y0 + 1 + row), expect,
+                                 f'K row {row} bit {bit}')
+
+    def test_pmode4(self):
+        # INIT0.COCO, SAM V=6, F=0, $FF9D=$E0, $FF22 PMODE 4.
+        # 256×192×2 at CPU $0000; palette 8/9 black/red; pixels doubled.
+        red, black = (0xaa, 0x00, 0x00), (0x00, 0x00, 0x00)
+        code = (b'\x86\x00\xb7\xff\xb8'
+                b'\x86\x20\xb7\xff\xb9'
+                b'\x86\xe0\xb7\xff\x9d'
+                b'\x86\x80\xb7\xff\x90'
+                b'\xb7\xff\xc3'
+                b'\xb7\xff\xc5'
+                b'\x86\xff\xb7\xff\x22'
+                b'\x86\x04\xb7\xff\x23'
+                b'\x86\xf0\xb7\xff\x22'
+                b'\x86\x80\xb7\x00\x00'
+                b'\x86\x40\xb7\x00\x20')
+        path = self.scratch_file('pmode4.rom')
+        with open(path, 'wb') as stream:
+            stream.write(build_rom(code + BRA_SELF))
+        dump_path = self.scratch_file('pmode4.ppm')
+        vm = self.get_vm(name='pmode4')
+        vm.add_args('-bios', path, '-display', 'none',
+                    '-accel', 'tcg,one-insn-per-tb=on')
+        vm.launch()
+        try:
+            try:
+                wait_info_registers(
+                    vm, f'PC={ROM_BASE + len(code):04x}',
+                    timeout=self.timeout)
+            except TimeoutError as err:
+                self.fail(f'pmode4: timed out\n{err}')
+            dump = vm.cmd('human-monitor-command',
+                          command_line='x/1xb 0x0000')
+            self.assertEqual([0x80], mem_bytes(dump), dump)
+            dump = vm.cmd('human-monitor-command',
+                          command_line='x/1xb 0x0020')
+            self.assertEqual([0x40], mem_bytes(dump), dump)
+            vm.cmd('screendump', filename=dump_path)
+        finally:
+            vm.shutdown()
+
+        with open(dump_path, 'rb') as stream:
+            self.assertEqual(stream.readline().strip(), b'P6')
+            size = stream.readline()
+            while size.startswith(b'#'):
+                size = stream.readline()
+            width, height = (int(v) for v in size.split())
+            self.assertEqual((width, height), (640, 240))
+            self.assertEqual(stream.readline().strip(), b'255')
+            pixels = stream.read()
+        self.assertEqual(len(pixels), 640 * 240 * 3)
+
+        def rgb(x, y):
+            i = (y * 640 + x) * 3
+            return tuple(pixels[i:i + 3])
+
+        x0, y0 = (640 - 512) // 2, (240 - 192) // 2
+        self.assertEqual(rgb(0, 0), (0x00, 0xff, 0x00))  # CSS=0 graphics border
+        self.assertEqual(rgb(x0, y0), red)
+        self.assertEqual(rgb(x0 + 1, y0), red)
+        self.assertEqual(rgb(x0 + 2, y0), black)
+        self.assertEqual(rgb(x0, y0 + 1), black)
+        self.assertEqual(rgb(x0 + 2, y0 + 1), red)
 
 
 if __name__ == '__main__':
