@@ -423,9 +423,9 @@ static const MemoryRegionOps coco3_gime_ops = {
 };
 
 /*
- * CoCo 3 keyboard (MAME coco3_keyboard). PIA0 PB bits are column strobes
- * (outputs, active low); PA0–PA6 are row inputs (active low). PA7 is the
- * DAC comparator and stays pulled up until a joystick is modelled.
+ * CoCo 3 keyboard. PIA0 PB bits are column strobes (outputs, active low);
+ * PA0–PA6 are row inputs (active low). PA7 is the DAC comparator and stays
+ * pulled up until a joystick is modelled.
  *
  *        PB0 PB1 PB2 PB3 PB4 PB5 PB6 PB7
  *  PA6:  Ent Clr Brk Alt Ctr F1  F2  Shift
@@ -435,53 +435,111 @@ static const MemoryRegionOps coco3_gime_ops = {
  *  PA2:  P   Q   R   S   T   U   V   W
  *  PA1:  H   I   J   K   L   M   N   O
  *  PA0:  @   A   B   C   D   E   F   G
+ *
+ * Host keys are mapped by US-QWERTY glyph, not by CoCo keycap position, so
+ * Shift-2 is @ rather than CoCo's ". Shift/Ctrl/Alt are applied after that
+ * translation; a remapped unshifted glyph (e.g. @) does not hold CoCo Shift.
+ * There is no CoCo key for ^ _ [ ] { } \\ | ` ~.
  */
+#define COCO3_KB_NONE  0xff
+
 typedef struct Coco3KeyMap {
     unsigned int lnx;
-    uint8_t col;
-    uint8_t row;
+    uint8_t col, row, sh;     /* host key, no Shift */
+    uint8_t scol, srow, ssh;  /* host key, Shift: matrix + CoCo Shift? */
 } Coco3KeyMap;
 
+/* Same CoCo key; host Shift also presses CoCo Shift (letters, Shift-Clear). */
+#define K_POS(lnx, c, r) { (lnx), (c), (r), 0, (c), (r), 1 }
+
 static const Coco3KeyMap coco3_keymap[] = {
-    { KEY_LEFTBRACE,  0, 0 }, { KEY_A, 1, 0 }, { KEY_B, 2, 0 },
-    { KEY_C, 3, 0 }, { KEY_D, 4, 0 }, { KEY_E, 5, 0 },
-    { KEY_F, 6, 0 }, { KEY_G, 7, 0 },
-    { KEY_H, 0, 1 }, { KEY_I, 1, 1 }, { KEY_J, 2, 1 },
-    { KEY_K, 3, 1 }, { KEY_L, 4, 1 }, { KEY_M, 5, 1 },
-    { KEY_N, 6, 1 }, { KEY_O, 7, 1 },
-    { KEY_P, 0, 2 }, { KEY_Q, 1, 2 }, { KEY_R, 2, 2 },
-    { KEY_S, 3, 2 }, { KEY_T, 4, 2 }, { KEY_U, 5, 2 },
-    { KEY_V, 6, 2 }, { KEY_W, 7, 2 },
-    { KEY_X, 0, 3 }, { KEY_Y, 1, 3 }, { KEY_Z, 2, 3 },
-    { KEY_UP, 3, 3 }, { KEY_DOWN, 4, 3 },
-    { KEY_LEFT, 5, 3 }, { KEY_BACKSPACE, 5, 3 },
-    { KEY_RIGHT, 6, 3 }, { KEY_SPACE, 7, 3 },
-    { KEY_0, 0, 4 }, { KEY_1, 1, 4 }, { KEY_2, 2, 4 },
-    { KEY_3, 3, 4 }, { KEY_4, 4, 4 }, { KEY_5, 5, 4 },
-    { KEY_6, 6, 4 }, { KEY_7, 7, 4 },
-    { KEY_8, 0, 5 }, { KEY_9, 1, 5 },
-    { KEY_MINUS, 2, 5 }, { KEY_SEMICOLON, 3, 5 },
-    { KEY_COMMA, 4, 5 }, { KEY_EQUAL, 5, 5 },
-    { KEY_DOT, 6, 5 }, { KEY_SLASH, 7, 5 },
-    { KEY_ENTER, 0, 6 }, { KEY_HOME, 1, 6 },
-    { KEY_ESC, 2, 6 }, { KEY_END, 2, 6 },
-    { KEY_LEFTALT, 3, 6 }, { KEY_RIGHTALT, 3, 6 },
-    { KEY_LEFTCTRL, 4, 6 }, { KEY_RIGHTCTRL, 4, 6 },
-    { KEY_F1, 5, 6 }, { KEY_F2, 6, 6 },
-    { KEY_LEFTSHIFT, 7, 6 }, { KEY_RIGHTSHIFT, 7, 6 },
+    K_POS(KEY_A, 1, 0), K_POS(KEY_B, 2, 0), K_POS(KEY_C, 3, 0),
+    K_POS(KEY_D, 4, 0), K_POS(KEY_E, 5, 0), K_POS(KEY_F, 6, 0),
+    K_POS(KEY_G, 7, 0),
+    K_POS(KEY_H, 0, 1), K_POS(KEY_I, 1, 1), K_POS(KEY_J, 2, 1),
+    K_POS(KEY_K, 3, 1), K_POS(KEY_L, 4, 1), K_POS(KEY_M, 5, 1),
+    K_POS(KEY_N, 6, 1), K_POS(KEY_O, 7, 1),
+    K_POS(KEY_P, 0, 2), K_POS(KEY_Q, 1, 2), K_POS(KEY_R, 2, 2),
+    K_POS(KEY_S, 3, 2), K_POS(KEY_T, 4, 2), K_POS(KEY_U, 5, 2),
+    K_POS(KEY_V, 6, 2), K_POS(KEY_W, 7, 2),
+    K_POS(KEY_X, 0, 3), K_POS(KEY_Y, 1, 3), K_POS(KEY_Z, 2, 3),
+    K_POS(KEY_UP, 3, 3), K_POS(KEY_DOWN, 4, 3),
+    K_POS(KEY_LEFT, 5, 3), K_POS(KEY_BACKSPACE, 5, 3),
+    K_POS(KEY_RIGHT, 6, 3), K_POS(KEY_SPACE, 7, 3),
+    /* 0 )  1 !  2 @  3 #  4 $  5 %  6 ^  7 &  8 *  9 ( */
+    { KEY_0, 0, 4, 0, 1, 5, 1 },
+    K_POS(KEY_1, 1, 4),
+    { KEY_2, 2, 4, 0, 0, 0, 0 },
+    K_POS(KEY_3, 3, 4), K_POS(KEY_4, 4, 4), K_POS(KEY_5, 5, 4),
+    { KEY_6, 6, 4, 0, COCO3_KB_NONE, 0, 0 },
+    { KEY_7, 7, 4, 0, 6, 4, 1 },
+    { KEY_8, 0, 5, 0, 2, 5, 1 },
+    { KEY_9, 1, 5, 0, 0, 5, 1 },
+    /* - _   = +   [ none] */
+    { KEY_MINUS, 5, 5, 0, COCO3_KB_NONE, 0, 0 },
+    { KEY_EQUAL, 5, 5, 1, 3, 5, 1 },
+    { KEY_SEMICOLON, 3, 5, 0, 2, 5, 0 },
+    { KEY_APOSTROPHE, 7, 4, 1, 2, 4, 1 },
+    K_POS(KEY_COMMA, 4, 5), K_POS(KEY_DOT, 6, 5), K_POS(KEY_SLASH, 7, 5),
+    K_POS(KEY_ENTER, 0, 6),
+    K_POS(KEY_F12, 1, 6), K_POS(KEY_HOME, 1, 6), /* Clear */
+    K_POS(KEY_ESC, 2, 6), K_POS(KEY_END, 2, 6),  /* Break */
+    K_POS(KEY_F1, 5, 6), K_POS(KEY_F2, 6, 6),
 };
+
+static bool coco3_host_key_down(const Coco3State *s, unsigned int lnx)
+{
+    return lnx < 128 &&
+           (s->kb_pressed[lnx / 64] & (1ULL << (lnx % 64))) != 0;
+}
 
 static void coco3_keyboard_rebuild(Coco3State *s)
 {
     size_t i;
+    bool host_shift = coco3_host_key_down(s, KEY_LEFTSHIFT) ||
+                      coco3_host_key_down(s, KEY_RIGHTSHIFT);
+    bool any = false;
+    bool need_shift = false;
 
     memset(s->kb_matrix, 0, sizeof(s->kb_matrix));
     for (i = 0; i < ARRAY_SIZE(coco3_keymap); i++) {
-        unsigned int lnx = coco3_keymap[i].lnx;
+        const Coco3KeyMap *k = &coco3_keymap[i];
+        uint8_t col, row, sh;
+        bool with_shift;
 
-        if (s->kb_pressed[lnx / 64] & (1ULL << (lnx % 64))) {
-            s->kb_matrix[coco3_keymap[i].col] |= 1u << coco3_keymap[i].row;
+        if (!coco3_host_key_down(s, k->lnx)) {
+            continue;
         }
+        with_shift =
+            (s->kb_shifted[k->lnx / 64] & (1ULL << (k->lnx % 64))) != 0;
+        if (with_shift) {
+            col = k->scol;
+            row = k->srow;
+            sh = k->ssh;
+        } else {
+            col = k->col;
+            row = k->row;
+            sh = k->sh;
+        }
+        if (col == COCO3_KB_NONE) {
+            continue;
+        }
+        s->kb_matrix[col] |= 1u << row;
+        any = true;
+        if (sh) {
+            need_shift = true;
+        }
+    }
+    if (need_shift || (host_shift && !any)) {
+        s->kb_matrix[7] |= 1u << 6;
+    }
+    if (coco3_host_key_down(s, KEY_LEFTCTRL) ||
+        coco3_host_key_down(s, KEY_RIGHTCTRL)) {
+        s->kb_matrix[4] |= 1u << 6;
+    }
+    if (coco3_host_key_down(s, KEY_LEFTALT) ||
+        coco3_host_key_down(s, KEY_RIGHTALT)) {
+        s->kb_matrix[3] |= 1u << 6;
     }
 }
 
@@ -513,6 +571,13 @@ static void coco3_vdg_mode(void *opaque, int n G_GNUC_UNUSED,
     coco3_video_invalidate(opaque);
 }
 
+/*
+ * Color BASIC KEYIN and NitrOS-9 K$RdKey sample a live matrix with no
+ * FIFO. Hold each host press for two 60 Hz ticks so guest has a chance
+ * to scan the key before it's released.
+ */
+#define COCO3_KB_HOLD_FRAMES  2
+
 static void coco3_keyboard_event(DeviceState *dev,
                                  QemuConsole *src G_GNUC_UNUSED,
                                  InputEvent *evt)
@@ -521,6 +586,8 @@ static void coco3_keyboard_event(DeviceState *dev,
     InputKeyEvent *key = evt->u.key.data;
     int qcode = qemu_input_key_value_to_qcode(key->key);
     unsigned int lnx;
+    unsigned int word;
+    uint64_t bit;
 
     if (qcode >= qemu_input_map_qcode_to_linux_len) {
         return;
@@ -529,13 +596,62 @@ static void coco3_keyboard_event(DeviceState *dev,
     if (lnx >= 128) {
         return;
     }
+    word = lnx / 64;
+    bit = 1ULL << (lnx % 64);
     if (key->down) {
-        s->kb_pressed[lnx / 64] |= 1ULL << (lnx % 64);
+        bool host_shift = coco3_host_key_down(s, KEY_LEFTSHIFT) ||
+                          coco3_host_key_down(s, KEY_RIGHTSHIFT) ||
+                          lnx == KEY_LEFTSHIFT || lnx == KEY_RIGHTSHIFT;
+
+        s->kb_pressed[word] |= bit;
+        s->kb_release[word] &= ~bit;
+        s->kb_hold[lnx] = COCO3_KB_HOLD_FRAMES;
+        if (host_shift) {
+            s->kb_shifted[word] |= bit;
+        } else {
+            s->kb_shifted[word] &= ~bit;
+        }
+    } else if (s->kb_hold[lnx]) {
+        s->kb_release[word] |= bit;
+        return;
     } else {
-        s->kb_pressed[lnx / 64] &= ~(1ULL << (lnx % 64));
+        s->kb_pressed[word] &= ~bit;
+        s->kb_shifted[word] &= ~bit;
     }
     coco3_keyboard_rebuild(s);
     coco3_keyboard_scan(s);
+}
+
+static void coco3_keyboard_hold_tick(Coco3State *s)
+{
+    unsigned int i;
+    bool changed = false;
+
+    for (i = 0; i < 128; i++) {
+        unsigned int word;
+        uint64_t bit;
+
+        if (!s->kb_hold[i]) {
+            continue;
+        }
+        s->kb_hold[i]--;
+        if (s->kb_hold[i]) {
+            continue;
+        }
+        word = i / 64;
+        bit = 1ULL << (i % 64);
+        if (!(s->kb_release[word] & bit)) {
+            continue;
+        }
+        s->kb_release[word] &= ~bit;
+        s->kb_pressed[word] &= ~bit;
+        s->kb_shifted[word] &= ~bit;
+        changed = true;
+    }
+    if (changed) {
+        coco3_keyboard_rebuild(s);
+        coco3_keyboard_scan(s);
+    }
 }
 
 static const QemuInputHandler coco3_keyboard_handler = {
@@ -547,6 +663,9 @@ static const QemuInputHandler coco3_keyboard_handler = {
 static void coco3_keyboard_reset(Coco3State *s)
 {
     memset(s->kb_pressed, 0, sizeof(s->kb_pressed));
+    memset(s->kb_release, 0, sizeof(s->kb_release));
+    memset(s->kb_shifted, 0, sizeof(s->kb_shifted));
+    memset(s->kb_hold, 0, sizeof(s->kb_hold));
     memset(s->kb_matrix, 0, sizeof(s->kb_matrix));
     coco3_keyboard_scan(s);
 }
@@ -558,6 +677,7 @@ static void coco3_frame_tick(void *opaque)
 
     s->gime_pending |= GIME_IRQ_VBORD;
     coco3_gime_update_irqs(s);
+    coco3_keyboard_hold_tick(s);
     coco3_video_invalidate(s);
     if (s->fake_cart_firq) {
         qemu_irq_raise(s->cart);
@@ -731,6 +851,9 @@ static int coco3_post_load(void *opaque, int version_id)
     coco3_gime_update_irqs(s);
     coco3_video_reset(s);
     memset(s->kb_pressed, 0, sizeof(s->kb_pressed));
+    memset(s->kb_release, 0, sizeof(s->kb_release));
+    memset(s->kb_shifted, 0, sizeof(s->kb_shifted));
+    memset(s->kb_hold, 0, sizeof(s->kb_hold));
     coco3_keyboard_scan(s);
     qemu_set_irq(s->cpu_irq, s->irq_level[0] | s->irq_level[1]);
     qemu_set_irq(s->cpu_firq, s->firq_level[0] | s->firq_level[1]);

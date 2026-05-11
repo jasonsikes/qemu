@@ -154,6 +154,9 @@ struct Coco3State {
 
     QemuInputHandlerState *kbd_hs;
     uint64_t kb_pressed[2];
+    uint64_t kb_release[2];     /* host up, still held for a frame */
+    uint64_t kb_shifted[2];     /* host Shift was down when this key went down */
+    uint8_t kb_hold[128];       /* remaining 60 Hz ticks of min hold */
     uint8_t kb_matrix[8];
 };
 

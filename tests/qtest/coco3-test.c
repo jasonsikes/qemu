@@ -95,6 +95,9 @@ static void test_keyboard_a(void)
     g_assert_cmphex(scan_col(s, 0), ==, 0xff);
 
     send_key(s, "a", false);
+    /* Min hold: still down until two 60 Hz ticks. */
+    g_assert_cmphex(scan_col(s, 1), ==, 0xfe);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
     g_assert_cmphex(scan_col(s, 1), ==, 0xff);
 
     qtest_quit(s);
@@ -118,6 +121,56 @@ static void test_keyboard_modifiers(void)
     g_assert_cmphex(scan_col(s, 2), ==, 0xbf); /* Break: PA6 */
     send_key(s, "esc", false);
 
+    send_key(s, "f12", true);
+    g_assert_cmphex(scan_col(s, 1), ==, 0xbf); /* Clear: PA6 */
+    send_key(s, "f12", false);
+
+    qtest_quit(s);
+}
+
+static void test_keyboard_glyphs(void)
+{
+    QTestState *s = coco3_vm_new();
+
+    pia0_kbd_init(s);
+
+    send_key(s, "2", true);
+    g_assert_cmphex(scan_col(s, 2), ==, 0xef); /* 2: PA4 */
+    send_key(s, "2", false);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
+
+    /* Shift-2 is @, not CoCo's ". CoCo Shift is not held. */
+    send_key(s, "shift", true);
+    send_key(s, "2", true);
+    g_assert_cmphex(scan_col(s, 0), ==, 0xfe); /* @: PA0 */
+    g_assert_cmphex(scan_col(s, 7), ==, 0xff);
+    send_key(s, "2", false);
+    send_key(s, "shift", false);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
+
+    /* Letters still use CoCo Shift. */
+    send_key(s, "shift", true);
+    send_key(s, "a", true);
+    g_assert_cmphex(scan_col(s, 1), ==, 0xfe);
+    g_assert_cmphex(scan_col(s, 7), ==, 0xbf);
+    send_key(s, "a", false);
+    send_key(s, "shift", false);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
+
+    /* = is CoCo Shift-minus; Shift-; is CoCo colon (no Shift). */
+    send_key(s, "equal", true);
+    g_assert_cmphex(scan_col(s, 5), ==, 0xdf); /* minus: PA5 */
+    g_assert_cmphex(scan_col(s, 7), ==, 0xbf);
+    send_key(s, "equal", false);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
+
+    send_key(s, "shift", true);
+    send_key(s, "semicolon", true);
+    g_assert_cmphex(scan_col(s, 2), ==, 0xdf); /* colon: PA5 */
+    g_assert_cmphex(scan_col(s, 7), ==, 0xff);
+    send_key(s, "semicolon", false);
+    send_key(s, "shift", false);
+
     qtest_quit(s);
 }
 
@@ -130,6 +183,7 @@ int main(int argc, char **argv)
     rom_path = write_stub_rom();
     qtest_add_func("/coco3/keyboard/a", test_keyboard_a);
     qtest_add_func("/coco3/keyboard/modifiers", test_keyboard_modifiers);
+    qtest_add_func("/coco3/keyboard/glyphs", test_keyboard_glyphs);
 
     ret = g_test_run();
 
