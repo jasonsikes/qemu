@@ -13,7 +13,7 @@ The ``coco3`` machine includes:
 - Two MC6821 PIAs at ``$FF00`` and ``$FF20``
 - Keyboard matrix on PIA0 (US-QWERTY glyphs: A is A, Shift-2 is @,
   Break is Esc, Clear is F12; each press is held for two 60 Hz frames)
-- Virt console at ``$FF10`` (first ``-serial``)
+- Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
 - Virt disk at ``$FF30`` (first ``-drive``)
 - Graphic console: fixed 640×240 window. GIME 320×192×16 and 40/80-column
   text (8×8 glyphs). With ``INIT0.COCO`` (set on ``-bios``
@@ -24,11 +24,10 @@ The ``coco3`` machine includes:
 ``-kernel`` loads a boot track at ``$2600`` and starts at ``$2602``.
 ``-bios`` loads a 32 KiB ROM. The two options cannot be used together.
 
-The first ``-drive`` is the virt disk. The console is ``-serial``.
+The first ``-drive`` is the virt disk. ``-serial`` is ``/T0``.
 
 .. code-block:: bash
 
    qemu-system-m6809 -M coco3 \
        -kernel build/os9/boottrack.bin \
-       -drive file=build/os9/qemu.raw,format=raw \
-       -display none -serial stdio -monitor none
+       -drive file=build/os9/qemu.raw,format=raw
