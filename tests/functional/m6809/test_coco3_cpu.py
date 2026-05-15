@@ -250,6 +250,20 @@ class Coco3MachineTest(QemuSystemTest):
             with open(tx_path, 'rb') as stream:
                 self.assertEqual(stream.read(), b'X')
 
+    def test_virt_rtc(self):
+        run_bios_case(self,
+            'vrtc_probe',
+            # lda $ff50..$ff54; sta $2000..  (YMD; skip HM/S — not frozen)
+            b'\xb6\xff\x50\xb7\x20\x00'
+            b'\xb6\xff\x51\xb7\x20\x01'
+            b'\xb6\xff\x52\xb7\x20\x02'
+            b'\xb6\xff\x53\xb7\x20\x03'
+            b'\xb6\xff\x54\xb7\x20\x04',
+            {'A': '15'},
+            extra=('-rtc', 'base=2026-08-21T21:00:00,clock=vm'),
+            mem=((0x2000, (0x51, 0x01, 126, 8, 21)),),
+        )
+
         # lda $ff13; bita #1; beq *; lda $ff12; sta $2000; lda $ff13; sta $2001
         program = (
             b'\xb6\xff\x13\x85\x01\x27\xf9'

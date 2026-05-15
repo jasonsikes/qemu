@@ -15,6 +15,7 @@ The ``coco3`` machine includes:
   Break is Esc, Clear is F12; each press is held for two 60 Hz frames)
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
 - Virt disk at ``$FF30`` (first ``-drive``)
+- Virt RTC at ``$FF50`` (host time; ``-rtc``; NitrOS-9 ``Clock2``)
 - Graphic console: fixed 640×240 window. GIME graphics (2/4/16 color at
   the documented HRES/CRES pairs, 192/200/225 lines) and 32/40/64/80-column
   text (8×8 glyphs). With ``INIT0.COCO`` (set on ``-bios``
@@ -26,6 +27,7 @@ The ``coco3`` machine includes:
 ``-bios`` loads a 32 KiB ROM. The two options cannot be used together.
 
 The first ``-drive`` is the virt disk. ``-serial`` is ``/T0``.
+The virt RTC follows ``-rtc`` (default ``base=utc``).
 
 .. code-block:: bash
 

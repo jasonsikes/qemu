@@ -1,5 +1,5 @@
 /*
- * Color Computer 3 board tests (PIA0 keyboard matrix).
+ * Color Computer 3 board tests (PIA0 keyboard matrix, virt RTC).
  *
  * Copyright (c) 2026 Jason G. Sikes
  *
@@ -18,6 +18,15 @@
 #define PIA0_CA   0xff01
 #define PIA0_DB   0xff02
 #define PIA0_CB   0xff03
+
+#define VRTC_MAGIC 0xff50
+#define VRTC_VER   0xff51
+#define VRTC_YEAR  0xff52
+#define VRTC_MONTH 0xff53
+#define VRTC_DAY   0xff54
+#define VRTC_HOUR  0xff55
+#define VRTC_MIN   0xff56
+#define VRTC_SEC   0xff57
 
 static char *rom_path;
 
@@ -174,6 +183,36 @@ static void test_keyboard_glyphs(void)
     qtest_quit(s);
 }
 
+static QTestState *coco3_vm_new_rtc(void)
+{
+    return qtest_initf("-M coco3 -bios %s -rtc base=2026-08-21T21:00:00,clock=vm",
+                       rom_path);
+}
+
+static void test_virt_rtc(void)
+{
+    QTestState *s = coco3_vm_new_rtc();
+    uint8_t sec0, sec1;
+
+    g_assert_cmphex(qtest_readb(s, VRTC_MAGIC), ==, 'Q');
+    g_assert_cmphex(qtest_readb(s, VRTC_VER), ==, 0x01);
+    g_assert_cmpint(qtest_readb(s, VRTC_YEAR), ==, 126); /* 2026 */
+    g_assert_cmpint(qtest_readb(s, VRTC_MONTH), ==, 8);
+    g_assert_cmpint(qtest_readb(s, VRTC_DAY), ==, 21);
+    g_assert_cmpint(qtest_readb(s, VRTC_HOUR), ==, 21);
+    g_assert_cmpint(qtest_readb(s, VRTC_MIN), ==, 0);
+    sec0 = qtest_readb(s, VRTC_SEC);
+
+    qtest_clock_step(s, 2 * 1000000000LL);
+    g_assert_cmpint(qtest_readb(s, VRTC_SEC), ==, sec0);
+
+    qtest_readb(s, VRTC_MAGIC);
+    sec1 = qtest_readb(s, VRTC_SEC);
+    g_assert_cmpint(sec1, ==, (sec0 + 2) % 60);
+
+    qtest_quit(s);
+}
+
 int main(int argc, char **argv)
 {
     int ret;
@@ -184,6 +223,7 @@ int main(int argc, char **argv)
     qtest_add_func("/coco3/keyboard/a", test_keyboard_a);
     qtest_add_func("/coco3/keyboard/modifiers", test_keyboard_modifiers);
     qtest_add_func("/coco3/keyboard/glyphs", test_keyboard_glyphs);
+    qtest_add_func("/coco3/virt-rtc", test_virt_rtc);
 
     ret = g_test_run();
 

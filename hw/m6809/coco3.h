@@ -19,6 +19,7 @@
 #include "mc6821.h"
 #include "virt_disk.h"
 #include "virt_cons.h"
+#include "virt_rtc.h"
 
 typedef struct QemuInputHandlerState QemuInputHandlerState;
 
@@ -121,6 +122,7 @@ struct Coco3State {
     uint8_t firq_level[2];
     Coco3VirtDiskState vdisk;
     Coco3VirtConsState vcons;
+    Coco3VirtRtcState vrtc;
 
     uint8_t init0;
     uint8_t init1;
