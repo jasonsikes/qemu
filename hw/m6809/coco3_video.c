@@ -14,11 +14,6 @@
 #include "ui/pixel_ops.h"
 #include "coco3_video.h"
 
-/* 320×192×16: HRES=111 (160 bytes/row), CRES=10 (4 bits/pixel). */
-#define GIME_MODE_WIDTH   320
-#define GIME_MODE_HEIGHT  192
-#define GIME_BPL_320_16   160
-
 /* VDG-compat (INIT0.COCO): 256×192, doubled to 512×192. */
 #define VDG_WIDTH         256
 #define VDG_HEIGHT        192
@@ -246,8 +241,29 @@ static uint8_t coco3_vdg_glyph_row(uint8_t data, int line)
     return coco3_glyph_row(ascii, line - 1);
 }
 
-static bool coco3_video_is_320x192x16(const Coco3State *s)
+static int coco3_gime_bpl(const Coco3State *s)
 {
+    static const int bpl[8] = { 16, 20, 32, 40, 64, 80, 128, 160 };
+
+    return bpl[(s->vres & GIME_VRES_HRES) >> 2];
+}
+
+static int coco3_gime_bpp(const Coco3State *s)
+{
+    switch (s->vres & GIME_VRES_CRES) {
+    case 0:
+        return 1;
+    case 1:
+        return 2;
+    default:
+        return 4;
+    }
+}
+
+static bool coco3_video_is_gime_gfx(const Coco3State *s)
+{
+    int width;
+
     if (s->init0 & GIME_INIT0_COCO) {
         return false;
     }
@@ -257,9 +273,12 @@ static bool coco3_video_is_320x192x16(const Coco3State *s)
     if (s->hoff & GIME_HOFF_HVEN) {
         return false;
     }
-    /* LPF=00 (192), HRES=111 (160 bytes), CRES=10 (16 color). */
-    return (s->vres & (GIME_VRES_LPF | GIME_VRES_HRES | GIME_VRES_CRES))
-           == ((7 << 2) | 2);
+    if (!coco3_video_lpf(s)) {
+        return false;
+    }
+    /* 1/2/4 bpp at the eight HRES byte widths; keep the raster ≤ 640. */
+    width = coco3_gime_bpl(s) * (8 / coco3_gime_bpp(s));
+    return width > 0 && width <= COCO3_DISPLAY_WIDTH;
 }
 
 static bool coco3_video_is_gime_text(const Coco3State *s, int *cols)
@@ -278,10 +297,18 @@ static bool coco3_video_is_gime_text(const Coco3State *s, int *cols)
     if (!coco3_video_lpr(s) || !coco3_video_lpf(s)) {
         return false;
     }
-    /* 0x0=32, 0x1=40, 1x0=64, 1x1=80; 32- and 64-column wait. */
+    /* 0x0=32, 0x1=40, 1x0=64, 1x1=80. */
     hres = s->vres & GIME_VRES_HRES_TEXT;
+    if (hres == 0x00) {
+        *cols = 32;
+        return true;
+    }
     if (hres == 0x04) {
         *cols = 40;
+        return true;
+    }
+    if (hres == 0x10) {
+        *cols = 64;
         return true;
     }
     if (hres == 0x14) {
@@ -365,28 +392,41 @@ static uint32_t coco3_vdg_border_pixel(const Coco3State *s)
     return gime_rgb_to_pixel(color);
 }
 
-static void coco3_draw_320x192x16(Coco3State *s, DisplaySurface *surface)
+static void coco3_draw_gime_gfx(Coco3State *s, DisplaySurface *surface)
 {
     uint8_t *ram = memory_region_get_ram_ptr(s->ram);
     uint8_t *d = surface_data(surface);
     uint32_t base = coco3_video_base(s);
     int stride = surface_stride(surface);
-    int x0 = (COCO3_DISPLAY_WIDTH - GIME_MODE_WIDTH) / 2;
-    int y0 = (COCO3_DISPLAY_HEIGHT - GIME_MODE_HEIGHT) / 2;
-    int x, y;
+    int lpr = coco3_video_lpr(s);
+    int lpf = coco3_video_lpf(s);
+    int bpl = coco3_gime_bpl(s);
+    int bpp = coco3_gime_bpp(s);
+    int px_per_byte = 8 / bpp;
+    int mask = (1 << bpp) - 1;
+    int width = bpl * px_per_byte;
+    int x0 = (COCO3_DISPLAY_WIDTH - width) / 2;
+    int y0 = (COCO3_DISPLAY_HEIGHT - lpf) / 2;
+    int x, y, i;
+
+    if (lpr < 1) {
+        lpr = 1;
+    }
 
     coco3_fill_border(s, surface);
     d += (size_t)y0 * stride + (size_t)x0 * 4;
 
-    for (y = 0; y < GIME_MODE_HEIGHT; y++) {
+    for (y = 0; y < lpf; y++) {
         uint32_t *p = (uint32_t *)d;
-        uint32_t row = base + (uint32_t)y * GIME_BPL_320_16;
+        uint32_t row = base + (uint32_t)(y / lpr) * bpl;
+        int px = 0;
 
-        for (x = 0; x < GIME_MODE_WIDTH; x += 2) {
-            uint8_t b = ram[(row + (x >> 1)) & (COCO3_RAM_SIZE - 1)];
+        for (x = 0; x < bpl; x++) {
+            uint8_t b = ram[(row + x) & (COCO3_RAM_SIZE - 1)];
 
-            p[x] = s->palette_rgb[b >> 4];
-            p[x + 1] = s->palette_rgb[b & 0x0f];
+            for (i = px_per_byte - 1; i >= 0; i--) {
+                p[px++] = s->palette_rgb[(b >> (i * bpp)) & mask];
+            }
         }
         d += stride;
     }
@@ -404,7 +444,7 @@ static void coco3_draw_gime_text(Coco3State *s, DisplaySurface *surface,
     int underline_line = coco3_video_underline_line(s);
     bool has_attr = s->vres & GIME_VRES_CRES_ATTR;
     int bpc = has_attr ? 2 : 1;
-    int xscale = (cols == 40) ? 2 : 1;
+    int xscale = (cols <= 40) ? 2 : 1;
     int width = cols * 8 * xscale;
     int x0 = (COCO3_DISPLAY_WIDTH - width) / 2;
     int y0 = (COCO3_DISPLAY_HEIGHT - lpf) / 2;
@@ -561,13 +601,13 @@ static void coco3_gfx_update(void *opaque)
 {
     Coco3State *s = opaque;
     DisplaySurface *surface;
-    bool bitmap = coco3_video_is_320x192x16(s);
+    bool gfx = coco3_video_is_gime_gfx(s);
     int cols = 0;
     bool text = coco3_video_is_gime_text(s, &cols);
     bool vdg_text = coco3_video_is_vdg_text(s);
     bool pmode4 = coco3_video_is_pmode4(s);
 
-    if (!bitmap && !text && !vdg_text && !pmode4 && !s->video_dirty) {
+    if (!gfx && !text && !vdg_text && !pmode4 && !s->video_dirty) {
         return;
     }
     s->video_dirty = false;
@@ -577,9 +617,9 @@ static void coco3_gfx_update(void *opaque)
         return;
     }
 
-    if (bitmap) {
+    if (gfx) {
         s->video_unimp_logged = false;
-        coco3_draw_320x192x16(s, surface);
+        coco3_draw_gime_gfx(s, surface);
     } else if (text) {
         s->video_unimp_logged = false;
         coco3_draw_gime_text(s, surface, cols);

@@ -445,6 +445,110 @@ class Coco3MachineTest(QemuSystemTest):
         with self.subTest('col40'):
             run_text('gime_text_40', 0x05, 2)
 
+    def test_gime_window_colors(self):
+        # CoWin text windows pick fg/bg palette registers via attributes.
+        # Same RGB palette, different attrs: W1 white bg (reg 0), W2 blue (reg 1).
+        white, blue, black = (0xff, 0xff, 0xff), (0x00, 0x00, 0xff), (0x00, 0x00, 0x00)
+        code = (b'\x86\x00\xb7\xff\x90'
+                b'\x86\x3f\xb7\xff\xb0'
+                b'\x86\x09\xb7\xff\xb1'
+                b'\x86\xe0\xb7\xff\x9d'
+                b'\x86\x00\xb7\xff\x9e'
+                b'\x86\x03\xb7\xff\x98'
+                b'\x86\x20\xb7\x00\x00'
+                b'\x86\x00\xb7\x00\x01'
+                b'\x86\x20\xb7\x00\x02'
+                b'\x86\x01\xb7\x00\x03'
+                b'\x86\x15\xb7\xff\x99')
+        path = self.scratch_file('gime_window_colors.rom')
+        with open(path, 'wb') as stream:
+            stream.write(build_rom(code + BRA_SELF))
+        dump_path = self.scratch_file('gime_window_colors.ppm')
+        vm = self.get_vm(name='gime_window_colors')
+        vm.add_args('-bios', path, '-display', 'none',
+                    '-accel', 'tcg,one-insn-per-tb=on')
+        vm.launch()
+        try:
+            try:
+                wait_info_registers(
+                    vm, f'PC={ROM_BASE + len(code):04x}',
+                    timeout=self.timeout)
+            except TimeoutError as err:
+                self.fail(f'gime_window_colors: timed out\n{err}')
+            vm.cmd('screendump', filename=dump_path)
+        finally:
+            vm.shutdown()
+
+        with open(dump_path, 'rb') as stream:
+            magic = stream.readline()
+            self.assertEqual(magic.strip(), b'P6')
+            size = stream.readline()
+            while size.startswith(b'#'):
+                size = stream.readline()
+            width, height = (int(v) for v in size.split())
+            self.assertEqual((width, height), (640, 240))
+            self.assertEqual(stream.readline().strip(), b'255')
+            pixels = stream.read()
+
+        def rgb(x, y):
+            i = (y * 640 + x) * 3
+            return tuple(pixels[i:i + 3])
+
+        y0 = (240 - 192) // 2
+        self.assertEqual(rgb(0, 0), black)
+        self.assertEqual(rgb(0, y0), white)
+        self.assertEqual(rgb(8, y0), blue)
+
+    def test_gime_gfx_200(self):
+        # CoWin type 8 on a 25-line screen: 320×200×16 (VRES LPF=200 HRES=160B).
+        code = (b'\x86\x00\xb7\xff\x90'
+                b'\x86\x00\xb7\xff\xb0'
+                b'\x86\x20\xb7\xff\xb1'
+                b'\x86\xe0\xb7\xff\x9d'
+                b'\x86\x00\xb7\xff\x9e'
+                b'\x86\x80\xb7\xff\x98'
+                b'\x86\x3e\xb7\xff\x99'
+                b'\x86\x01\xb7\x00\x00')
+        path = self.scratch_file('gime_gfx_200.rom')
+        with open(path, 'wb') as stream:
+            stream.write(build_rom(code + BRA_SELF))
+        dump_path = self.scratch_file('gime_gfx_200.ppm')
+        vm = self.get_vm(name='gime_gfx_200')
+        vm.add_args('-bios', path, '-display', 'none',
+                    '-accel', 'tcg,one-insn-per-tb=on')
+        vm.launch()
+        try:
+            try:
+                wait_info_registers(
+                    vm, f'PC={ROM_BASE + len(code):04x}',
+                    timeout=self.timeout)
+            except TimeoutError as err:
+                self.fail(f'gime_gfx_200: timed out\n{err}')
+            vm.cmd('screendump', filename=dump_path)
+        finally:
+            vm.shutdown()
+
+        with open(dump_path, 'rb') as stream:
+            magic = stream.readline()
+            self.assertEqual(magic.strip(), b'P6')
+            size = stream.readline()
+            while size.startswith(b'#'):
+                size = stream.readline()
+            width, height = (int(v) for v in size.split())
+            self.assertEqual((width, height), (640, 240))
+            self.assertEqual(stream.readline().strip(), b'255')
+            pixels = stream.read()
+
+        def rgb(x, y):
+            i = (y * 640 + x) * 3
+            return tuple(pixels[i:i + 3])
+
+        x0, y0 = (640 - 320) // 2, (240 - 200) // 2
+        self.assertEqual(rgb(0, 0), (0x00, 0x00, 0x00))
+        self.assertEqual(rgb(x0, y0 - 1), (0x00, 0x00, 0x00))
+        self.assertEqual(rgb(x0, y0), (0x00, 0x00, 0x00))
+        self.assertEqual(rgb(x0 + 1, y0), (0xaa, 0x00, 0x00))
+
     def test_vdg_text(self):
         # INIT0.COCO, SAM V=0, F=2 ($0400), $FF9D=$E0 → CPU $0400.
         # VDG "OK" (codes $0F/$0B); palette 12/13 black/red; 8×12 cells.

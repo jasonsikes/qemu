@@ -15,7 +15,8 @@ The ``coco3`` machine includes:
   Break is Esc, Clear is F12; each press is held for two 60 Hz frames)
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
 - Virt disk at ``$FF30`` (first ``-drive``)
-- Graphic console: fixed 640×240 window. GIME 320×192×16 and 40/80-column
+- Graphic console: fixed 640×240 window. GIME graphics (2/4/16 color at
+  the documented HRES/CRES pairs, 192/200/225 lines) and 32/40/64/80-column
   text (8×8 glyphs). With ``INIT0.COCO`` (set on ``-bios``
   reset), VDG-compat 32×16 text and PMODE 4 (256×192×2) use SAM F0–F6 /
   V0–V2 and PIA1 ``$FF22``.

@@ -390,6 +390,7 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
         break;
     case GIME_R_VBANK:
         s->vbank = data;
+        coco3_video_invalidate(s);
         break;
     case GIME_R_VSCROLL:
         s->vscroll = data;
