@@ -26,6 +26,8 @@ DECLARE_INSTANCE_CHECKER(MC6821State, MC6821, TYPE_MC6821)
 #define MC6821_GPIO_PB      "PB"
 #define MC6821_GPIO_PA_IN   "PA-in"
 #define MC6821_GPIO_PB_IN   "PB-in"
+#define MC6821_GPIO_CA2     "CA2"
+#define MC6821_GPIO_CB2     "CB2"
 
 typedef struct MC6821Port {
     uint8_t data;
@@ -46,8 +48,11 @@ struct MC6821State {
     MC6821Port b;
     qemu_irq a_out[8];
     qemu_irq b_out[8];
+    qemu_irq ca2;
+    qemu_irq cb2;
 };
 
 void mc6821_set_port_in(MC6821State *s, bool port_b, uint8_t value);
+int mc6821_c2_level(const MC6821Port *port);
 
 #endif /* HW_M6809_MC6821_H */

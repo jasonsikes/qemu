@@ -1,5 +1,5 @@
 /*
- * Color Computer 3 board tests (PIA0 keyboard matrix, virt RTC).
+ * Color Computer 3 board tests (PIA0 keyboard, analog joystick, virt RTC).
  *
  * Copyright (c) 2026 Jason G. Sikes
  *
@@ -18,6 +18,8 @@
 #define PIA0_CA   0xff01
 #define PIA0_DB   0xff02
 #define PIA0_CB   0xff03
+#define PIA1_DA   0xff20
+#define PIA1_CA   0xff21
 
 #define VRTC_MAGIC 0xff50
 #define VRTC_VER   0xff51
@@ -121,14 +123,17 @@ static void test_keyboard_modifiers(void)
     send_key(s, "ret", true);
     g_assert_cmphex(scan_col(s, 0), ==, 0xbf); /* Enter: PA6 */
     send_key(s, "ret", false);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
 
     send_key(s, "shift", true);
     g_assert_cmphex(scan_col(s, 7), ==, 0xbf); /* Shift: PA6 */
     send_key(s, "shift", false);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
 
     send_key(s, "esc", true);
     g_assert_cmphex(scan_col(s, 2), ==, 0xbf); /* Break: PA6 */
     send_key(s, "esc", false);
+    qtest_clock_step(s, (1000000000LL / 60) * 2);
 
     send_key(s, "f12", true);
     g_assert_cmphex(scan_col(s, 1), ==, 0xbf); /* Clear: PA6 */
@@ -183,6 +188,115 @@ static void test_keyboard_glyphs(void)
     qtest_quit(s);
 }
 
+/* PIA1 PA2–PA7 are DAC outputs. */
+static void pia1_dac_init(QTestState *s)
+{
+    qtest_writeb(s, PIA1_CA, 0);
+    qtest_writeb(s, PIA1_DA, 0xfc);
+    qtest_writeb(s, PIA1_CA, 0x04);
+}
+
+static void set_dac(QTestState *s, uint8_t val)
+{
+    qtest_writeb(s, PIA1_DA, (val & 0x3f) << 2);
+}
+
+/* PIA0 CA2 = SEL1 (LSB), CB2 = SEL2 (MSB). Keep data registers selected. */
+static void set_mux(QTestState *s, unsigned sel)
+{
+    qtest_writeb(s, PIA0_CA, 0x34 | ((sel & 1) ? 0x08 : 0));
+    qtest_writeb(s, PIA0_CB, 0x34 | ((sel & 2) ? 0x08 : 0));
+}
+
+static uint8_t read_pa(QTestState *s)
+{
+    qtest_writeb(s, PIA0_DB, 0xff);
+    return qtest_readb(s, PIA0_DA);
+}
+
+static void send_abs(QTestState *s, int x, int y)
+{
+    qtest_qmp_assert_success(s,
+        "{'execute': 'input-send-event', 'arguments': {"
+        " 'events': ["
+        "  {'type': 'abs', 'data': {'axis': 'x', 'value': %d}},"
+        "  {'type': 'abs', 'data': {'axis': 'y', 'value': %d}}"
+        "]}}", x, y);
+}
+
+static void send_btn(QTestState *s, const char *button, bool down)
+{
+    if (down) {
+        qtest_qmp_assert_success(s,
+            "{'execute': 'input-send-event', 'arguments': {"
+            " 'events': [{'type': 'btn', 'data': {'down': true,"
+            "  'button': %s}}]}}",
+            button);
+    } else {
+        qtest_qmp_assert_success(s,
+            "{'execute': 'input-send-event', 'arguments': {"
+            " 'events': [{'type': 'btn', 'data': {'down': false,"
+            "  'button': %s}}]}}",
+            button);
+    }
+}
+
+static void test_joystick_dac(void)
+{
+    QTestState *s = coco3_vm_new();
+
+    pia0_kbd_init(s);
+    pia1_dac_init(s);
+    set_mux(s, 0);
+
+    /* Centered right X is 32. */
+    set_dac(s, 32);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0x80);
+    set_dac(s, 33);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0);
+
+    send_abs(s, 0, 0);
+    set_dac(s, 0);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0x80);
+    set_dac(s, 1);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0);
+
+    send_abs(s, 0x7fff, 0x7fff);
+    set_mux(s, 1); /* right Y */
+    set_dac(s, 62);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0x80);
+    set_dac(s, 63);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0x80);
+
+    /* Left stick stays centered. */
+    set_mux(s, 2);
+    set_dac(s, 32);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0x80);
+    set_dac(s, 33);
+    g_assert_cmphex(read_pa(s) & 0x80, ==, 0);
+
+    qtest_quit(s);
+}
+
+static void test_joystick_buttons(void)
+{
+    QTestState *s = coco3_vm_new();
+
+    pia0_kbd_init(s);
+
+    g_assert_cmphex(read_pa(s), ==, 0xff);
+
+    send_btn(s, "left", true);
+    g_assert_cmphex(read_pa(s), ==, 0xfe); /* PA0 */
+    send_btn(s, "right", true);
+    g_assert_cmphex(read_pa(s), ==, 0xfa); /* PA0 and PA2 */
+    send_btn(s, "left", false);
+    send_btn(s, "right", false);
+    g_assert_cmphex(read_pa(s), ==, 0xff);
+
+    qtest_quit(s);
+}
+
 static QTestState *coco3_vm_new_rtc(void)
 {
     return qtest_initf("-M coco3 -bios %s -rtc base=2026-08-21T21:00:00,clock=vm",
@@ -223,6 +337,8 @@ int main(int argc, char **argv)
     qtest_add_func("/coco3/keyboard/a", test_keyboard_a);
     qtest_add_func("/coco3/keyboard/modifiers", test_keyboard_modifiers);
     qtest_add_func("/coco3/keyboard/glyphs", test_keyboard_glyphs);
+    qtest_add_func("/coco3/joystick/dac", test_joystick_dac);
+    qtest_add_func("/coco3/joystick/buttons", test_joystick_buttons);
     qtest_add_func("/coco3/virt-rtc", test_virt_rtc);
 
     ret = g_test_run();

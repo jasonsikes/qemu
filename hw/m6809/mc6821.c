@@ -1,7 +1,8 @@
 /*
  * Motorola MC6821 Peripheral Interface Adapter
  *
- * Unimplemented: Cx2 handshake outputs and strobe modes.
+ * Unimplemented: Cx2 handshake outputs and strobe modes. Simple Cx2
+ * output (control bits 5 and 4 set, pin follows bit 3) is supported.
  *
  * Copyright (c) 2026 Jason G. Sikes
  *
@@ -23,16 +24,28 @@
 #define CR_C1_ENABLE    0x01 /* interrupt on the selected Cx1 edge */
 #define CR_C1_RISING    0x02 /* 0 = high-to-low edge, 1 = low-to-high */
 #define CR_DDR_SELECT   0x04 /* 0 = DDR at the data address, 1 = data */
-#define CR_C2_ENABLE    0x08
+#define CR_C2_ENABLE    0x08 /* input: IRQ2 enable; simple output: pin level */
+#define CR_C2_DIRECT    0x10 /* with OUTPUT: C2 follows CR_C2_ENABLE */
+#define CR_C2_OUTPUT    0x20
 #define CR_IRQ2         0x40
 #define CR_IRQ1         0x80
 #define CR_WRITE_MASK   0x3f
+
+int mc6821_c2_level(const MC6821Port *port)
+{
+    if ((port->cr & (CR_C2_OUTPUT | CR_C2_DIRECT)) ==
+        (CR_C2_OUTPUT | CR_C2_DIRECT)) {
+        return !!(port->cr & CR_C2_ENABLE);
+    }
+    return 0;
+}
 
 /* A flag only reaches the interrupt output when its enable bit is also set. */
 static bool mc6821_port_irq(const MC6821Port *port)
 {
     return ((port->cr & CR_IRQ1) && (port->cr & CR_C1_ENABLE))
-        || ((port->cr & CR_IRQ2) && (port->cr & CR_C2_ENABLE));
+        || ((port->cr & CR_IRQ2) && (port->cr & CR_C2_ENABLE)
+            && !(port->cr & CR_C2_OUTPUT));
 }
 
 static void mc6821_update_irq(MC6821State *s)
@@ -56,10 +69,17 @@ static void mc6821_port_set_out(qemu_irq *out, const MC6821Port *port)
     }
 }
 
+static void mc6821_update_c2(MC6821State *s)
+{
+    qemu_set_irq(s->ca2, mc6821_c2_level(&s->a));
+    qemu_set_irq(s->cb2, mc6821_c2_level(&s->b));
+}
+
 static void mc6821_update_out(MC6821State *s)
 {
     mc6821_port_set_out(s->a_out, &s->a);
     mc6821_port_set_out(s->b_out, &s->b);
+    mc6821_update_c2(s);
 }
 
 void mc6821_set_port_in(MC6821State *s, bool port_b, uint8_t value)
@@ -117,9 +137,15 @@ static void mc6821_write(void *opaque, hwaddr addr, uint64_t val,
     MC6821Port *port = (addr & 2) ? &s->b : &s->a;
 
     if (addr & 1) {
+        uint8_t cr = val & CR_WRITE_MASK;
+
         /* The interrupt flags are set by hardware only, so preserve them. */
-        port->cr = (port->cr & ~CR_WRITE_MASK) | (val & CR_WRITE_MASK);
+        port->cr = (port->cr & ~CR_WRITE_MASK) | cr;
+        if ((cr & CR_C2_OUTPUT) && !(cr & CR_C2_DIRECT)) {
+            qemu_log_mask(LOG_UNIMP, "mc6821: Cx2 handshake/strobe\n");
+        }
         mc6821_update_irq(s);
+        mc6821_update_c2(s);
         return;
     }
 
@@ -198,6 +224,8 @@ static void mc6821_init(Object *obj)
     qdev_init_gpio_in_named(DEVICE(obj), mc6821_pb_in, MC6821_GPIO_PB_IN, 8);
     qdev_init_gpio_out_named(DEVICE(obj), s->a_out, MC6821_GPIO_PA, 8);
     qdev_init_gpio_out_named(DEVICE(obj), s->b_out, MC6821_GPIO_PB, 8);
+    qdev_init_gpio_out_named(DEVICE(obj), &s->ca2, MC6821_GPIO_CA2, 1);
+    qdev_init_gpio_out_named(DEVICE(obj), &s->cb2, MC6821_GPIO_CB2, 1);
 }
 
 static const VMStateDescription vmstate_mc6821_port = {

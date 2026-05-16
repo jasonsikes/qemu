@@ -425,9 +425,10 @@ static const MemoryRegionOps coco3_gime_ops = {
 };
 
 /*
- * CoCo 3 keyboard. PIA0 PB bits are column strobes (outputs, active low);
- * PA0–PA6 are row inputs (active low). PA7 is the DAC comparator and stays
- * pulled up until a joystick is modelled.
+ * CoCo 3 keyboard and analog joystick. PIA0 PB bits are column strobes
+ * (outputs, active low); PA0–PA6 are row inputs (active low). PA7 is the
+ * DAC comparator (1 if the selected axis is >= the 6-bit DAC). Right
+ * fire buttons share PA0/PA2; left share PA1/PA3.
  *
  *        PB0 PB1 PB2 PB3 PB4 PB5 PB6 PB7
  *  PA6:  Ent Clr Brk Alt Ctr F1  F2  Shift
@@ -545,6 +546,33 @@ static void coco3_keyboard_rebuild(Coco3State *s)
     }
 }
 
+#define COCO3_JOY_MAX     63
+#define COCO3_JOY_CENTER  32
+#define COCO3_JOY_RX      0
+#define COCO3_JOY_RY      1
+#define COCO3_JOY_LX      2
+#define COCO3_JOY_LY      3
+#define COCO3_JOY_BTN_R1  0x01 /* PA0, right primary */
+#define COCO3_JOY_BTN_L1  0x02 /* PA1, left primary */
+#define COCO3_JOY_BTN_R2  0x04 /* PA2, right secondary */
+#define COCO3_JOY_BTN_L2  0x08 /* PA3, left secondary */
+
+static uint8_t coco3_joy_dac(const Coco3State *s)
+{
+    return ((s->pia1.a.data & s->pia1.a.ddr) >> 2) & 0x3f;
+}
+
+static unsigned coco3_joy_mux(const Coco3State *s)
+{
+    /* CA2 = SEL1 (LSB), CB2 = SEL2 (MSB). */
+    return mc6821_c2_level(&s->pia0.a) | (mc6821_c2_level(&s->pia0.b) << 1);
+}
+
+static bool coco3_joy_compare(const Coco3State *s)
+{
+    return s->joy_axis[coco3_joy_mux(s)] >= coco3_joy_dac(s);
+}
+
 static void coco3_keyboard_scan(Coco3State *s)
 {
     /* Undriven PB pins are pulled up, so they do not select a column. */
@@ -557,7 +585,11 @@ static void coco3_keyboard_scan(Coco3State *s)
             rows &= ~s->kb_matrix[col];
         }
     }
-    mc6821_set_port_in(&s->pia0, false, rows | 0x80);
+    rows &= (uint8_t)~s->joy_buttons;
+    if (coco3_joy_compare(s)) {
+        rows |= 0x80;
+    }
+    mc6821_set_port_in(&s->pia0, false, rows);
 }
 
 static void coco3_keyboard_column(void *opaque, int n G_GNUC_UNUSED,
@@ -572,6 +604,64 @@ static void coco3_vdg_mode(void *opaque, int n G_GNUC_UNUSED,
 {
     coco3_video_invalidate(opaque);
 }
+
+/* PIA0 CA2/CB2 select the axis; PIA1 PA2–PA7 are the DAC. */
+static void coco3_joy_pin(void *opaque, int n G_GNUC_UNUSED,
+                          int level G_GNUC_UNUSED)
+{
+    coco3_keyboard_scan(opaque);
+}
+
+static void coco3_pointer_event(DeviceState *dev,
+                                QemuConsole *src G_GNUC_UNUSED,
+                                InputEvent *evt)
+{
+    Coco3State *s = COCO3(dev);
+    InputMoveEvent *move;
+    InputBtnEvent *btn;
+
+    switch (evt->type) {
+    case INPUT_EVENT_KIND_ABS:
+        move = evt->u.abs.data;
+        if (move->axis == INPUT_AXIS_X) {
+            s->joy_axis[COCO3_JOY_RX] =
+                qemu_input_scale_axis(move->value,
+                                      INPUT_EVENT_ABS_MIN, INPUT_EVENT_ABS_MAX,
+                                      0, COCO3_JOY_MAX);
+        } else if (move->axis == INPUT_AXIS_Y) {
+            s->joy_axis[COCO3_JOY_RY] =
+                qemu_input_scale_axis(move->value,
+                                      INPUT_EVENT_ABS_MIN, INPUT_EVENT_ABS_MAX,
+                                      0, COCO3_JOY_MAX);
+        }
+        break;
+    case INPUT_EVENT_KIND_BTN:
+        btn = evt->u.btn.data;
+        if (btn->button == INPUT_BUTTON_LEFT) {
+            if (btn->down) {
+                s->joy_buttons |= COCO3_JOY_BTN_R1;
+            } else {
+                s->joy_buttons &= ~COCO3_JOY_BTN_R1;
+            }
+        } else if (btn->button == INPUT_BUTTON_RIGHT) {
+            if (btn->down) {
+                s->joy_buttons |= COCO3_JOY_BTN_R2;
+            } else {
+                s->joy_buttons &= ~COCO3_JOY_BTN_R2;
+            }
+        }
+        break;
+    default:
+        return;
+    }
+    coco3_keyboard_scan(s);
+}
+
+static const QemuInputHandler coco3_pointer_handler = {
+    .name = "coco3-joystick",
+    .mask = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS,
+    .event = coco3_pointer_event,
+};
 
 /*
  * Color BASIC KEYIN and NitrOS-9 K$RdKey sample a live matrix with no
@@ -765,6 +855,12 @@ static void coco3_realize(DeviceState *dev, Error **errp)
                                     qdev_get_gpio_in_named(DEVICE(s),
                                                            "kb-col", i));
     }
+    qdev_connect_gpio_out_named(DEVICE(&s->pia0), MC6821_GPIO_CA2, 0,
+                                qdev_get_gpio_in_named(DEVICE(s),
+                                                       "joy-mux", 0));
+    qdev_connect_gpio_out_named(DEVICE(&s->pia0), MC6821_GPIO_CB2, 0,
+                                qdev_get_gpio_in_named(DEVICE(s),
+                                                       "joy-mux", 1));
 
     object_initialize_child(OBJECT(dev), "pia1", &s->pia1, TYPE_MC6821);
     sysbus_realize(SYS_BUS_DEVICE(&s->pia1), &error_abort);
@@ -818,9 +914,20 @@ static void coco3_realize(DeviceState *dev, Error **errp)
         qdev_connect_gpio_out_named(DEVICE(&s->pia1), MC6821_GPIO_PB, i,
                                     qdev_get_gpio_in_named(DEVICE(s),
                                                            "vdg-mode", i));
+        qdev_connect_gpio_out_named(DEVICE(&s->pia1), MC6821_GPIO_PA, i,
+                                    qdev_get_gpio_in_named(DEVICE(s),
+                                                           "dac", i));
     }
 
+    s->joy_axis[COCO3_JOY_RX] = COCO3_JOY_CENTER;
+    s->joy_axis[COCO3_JOY_RY] = COCO3_JOY_CENTER;
+    s->joy_axis[COCO3_JOY_LX] = COCO3_JOY_CENTER;
+    s->joy_axis[COCO3_JOY_LY] = COCO3_JOY_CENTER;
+    s->joy_buttons = 0;
+
     s->kbd_hs = qemu_input_handler_register(dev, &coco3_keyboard_handler);
+    s->ptr_hs = qemu_input_handler_register(dev, &coco3_pointer_handler);
+    qemu_input_handler_activate(s->ptr_hs);
 
     s->cart = qdev_get_gpio_in_named(DEVICE(&s->pia1), "CB1", 0);
     s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, coco3_frame_tick, s);
@@ -874,8 +981,8 @@ static int coco3_post_load(void *opaque, int version_id)
 
 static const VMStateDescription coco3_vmstate = {
     .name = TYPE_COCO3,
-    .version_id = 6,
-    .minimum_version_id = 6,
+    .version_id = 7,
+    .minimum_version_id = 7,
     .post_load = coco3_post_load,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT8(init0, Coco3State),
@@ -903,6 +1010,8 @@ static const VMStateDescription coco3_vmstate = {
         VMSTATE_UINT8(hoff, Coco3State),
         VMSTATE_UINT8_ARRAY(palette, Coco3State, GIME_PALETTE_COUNT),
         VMSTATE_UINT8_ARRAY(kb_matrix, Coco3State, 8),
+        VMSTATE_UINT8_ARRAY(joy_axis, Coco3State, 4),
+        VMSTATE_UINT8(joy_buttons, Coco3State),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -919,12 +1028,15 @@ static void coco3_unrealize(DeviceState *dev)
     Coco3State *s = COCO3(dev);
 
     g_clear_pointer(&s->kbd_hs, qemu_input_handler_unregister);
+    g_clear_pointer(&s->ptr_hs, qemu_input_handler_unregister);
 }
 
 static void coco3_instance_init(Object *obj)
 {
     qdev_init_gpio_in_named(DEVICE(obj), coco3_keyboard_column, "kb-col", 8);
     qdev_init_gpio_in_named(DEVICE(obj), coco3_vdg_mode, "vdg-mode", 8);
+    qdev_init_gpio_in_named(DEVICE(obj), coco3_joy_pin, "joy-mux", 2);
+    qdev_init_gpio_in_named(DEVICE(obj), coco3_joy_pin, "dac", 8);
 }
 
 static void coco3_class_init(ObjectClass *oc, const void *data)

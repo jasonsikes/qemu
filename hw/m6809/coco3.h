@@ -160,6 +160,10 @@ struct Coco3State {
     uint64_t kb_shifted[2];     /* host Shift was down when this key went down */
     uint8_t kb_hold[128];       /* remaining 60 Hz ticks of min hold */
     uint8_t kb_matrix[8];
+
+    QemuInputHandlerState *ptr_hs;
+    uint8_t joy_axis[4];        /* 0–63: right X/Y, left X/Y */
+    uint8_t joy_buttons;        /* PA0–PA3: 1 = pressed (active low on PA) */
 };
 
 #endif /* HW_M6809_COCO3_H */
