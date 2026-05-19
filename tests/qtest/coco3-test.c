@@ -1,5 +1,6 @@
 /*
- * Color Computer 3 board tests (PIA0 keyboard, analog joystick, virt RTC).
+ * Color Computer 3 board tests (PIA0 keyboard, analog joystick,
+ * 65C52 Microsoft mouse, virt RTC).
  *
  * Copyright (c) 2026 Jason G. Sikes
  *
@@ -29,6 +30,16 @@
 #define VRTC_HOUR  0xff55
 #define VRTC_MIN   0xff56
 #define VRTC_SEC   0xff57
+
+#define MOUSE_IS   0xff64
+#define MOUSE_CF   0xff65
+#define MOUSE_TB   0xff66
+#define MOUSE_DATA 0xff67
+#define GIME_IRQEN 0xff92
+
+#define MOS65C52_ISE_RXF  0x01
+#define MOS65C52_ISE_IRQ  0x80
+#define GIME_IRQ_CART     0x01
 
 static char *rom_path;
 
@@ -297,6 +308,38 @@ static void test_joystick_buttons(void)
     qtest_quit(s);
 }
 
+static void mouse_init(QTestState *s)
+{
+    qtest_writeb(s, MOUSE_CF, 0x46);
+    qtest_writeb(s, MOUSE_CF, 0xc0);
+    qtest_writeb(s, MOUSE_TB, 0);
+    qtest_writeb(s, MOUSE_IS, MOS65C52_ISE_IRQ | 0x07);
+    qtest_writeb(s, GIME_IRQEN, GIME_IRQ_CART);
+}
+
+static void test_mouse_packet(void)
+{
+    QTestState *s = coco3_vm_new();
+
+    mouse_init(s);
+    g_assert_cmphex(qtest_readb(s, MOUSE_IS) & 0x07, ==, 0);
+
+    qtest_qmp_assert_success(s,
+        "{'execute': 'input-send-event', 'arguments': {"
+        " 'events': [{'type': 'rel', 'data': {'axis': 'x', 'value': 10}}]}}");
+
+    g_assert_cmphex(qtest_readb(s, MOUSE_IS) & 0x81, ==, 0x81);
+    g_assert_cmphex(qtest_readb(s, GIME_IRQEN) & GIME_IRQ_CART, ==,
+                    GIME_IRQ_CART);
+    /* Microsoft: sync $40, dx=10, dy=0. */
+    g_assert_cmphex(qtest_readb(s, MOUSE_DATA), ==, 0x40);
+    g_assert_cmphex(qtest_readb(s, MOUSE_DATA), ==, 0x0a);
+    g_assert_cmphex(qtest_readb(s, MOUSE_DATA), ==, 0x00);
+    g_assert_cmphex(qtest_readb(s, MOUSE_IS) & 0x07, ==, 0);
+
+    qtest_quit(s);
+}
+
 static QTestState *coco3_vm_new_rtc(void)
 {
     return qtest_initf("-M coco3 -bios %s -rtc base=2026-08-21T21:00:00,clock=vm",
@@ -339,6 +382,7 @@ int main(int argc, char **argv)
     qtest_add_func("/coco3/keyboard/glyphs", test_keyboard_glyphs);
     qtest_add_func("/coco3/joystick/dac", test_joystick_dac);
     qtest_add_func("/coco3/joystick/buttons", test_joystick_buttons);
+    qtest_add_func("/coco3/mouse/packet", test_mouse_packet);
     qtest_add_func("/coco3/virt-rtc", test_virt_rtc);
 
     ret = g_test_run();

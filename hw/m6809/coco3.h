@@ -44,6 +44,7 @@ DECLARE_INSTANCE_CHECKER(Coco3State, COCO3, TYPE_COCO3)
 #define GIME_INIT0_MMUEN        0x40
 #define GIME_INIT0_COCO         0x80 /* 1 = VDG/SAM video, 0 = GIME */
 #define GIME_INIT1_TR           0x01
+#define GIME_IRQ_CART           0x01
 #define GIME_IRQ_VBORD          0x08
 
 #define GIME_VMODE_LPR          0x07
@@ -164,6 +165,23 @@ struct Coco3State {
     QemuInputHandlerState *ptr_hs;
     uint8_t joy_axis[4];        /* 0–63: right X/Y, left X/Y */
     uint8_t joy_buttons;        /* PA0–PA3: 1 = pressed (active low on PA) */
+
+    MemoryRegion mouse_io;
+    QemuInputHandlerState *mouse_hs;
+    uint8_t mouse_iereg;
+    uint8_t mouse_cfreg;
+    uint8_t mouse_rx[16];
+    uint8_t mouse_rx_r;
+    uint8_t mouse_rx_n;
+    int mouse_dx;
+    int mouse_dy;
+    bool mouse_left;
+    bool mouse_right;
+    bool mouse_btn_sync;
+    bool mouse_irq;
 };
+
+void coco3_gime_cart_raise(Coco3State *s);
+void coco3_joy_ms_buttons(Coco3State *s, bool left, bool right);
 
 #endif /* HW_M6809_COCO3_H */

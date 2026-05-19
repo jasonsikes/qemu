@@ -27,6 +27,7 @@
 #include "standard-headers/linux/input-event-codes.h"
 #include "coco3.h"
 #include "coco3_video.h"
+#include "coco3_mouse.h"
 #include "boot.h"
 
 /* CoCo ROM typically occupies the upper 32 KiB of the 64 KiB address space. */
@@ -186,6 +187,12 @@ static void coco3_gime_update_irqs(Coco3State *s)
     /* INIT0.IEN/FEN are ignored; $FF92/$FF93 alone drive the CPU lines. */
     qemu_set_irq(s->irq_src[1], s->gime_pending & s->gime_irqen);
     qemu_set_irq(s->firq_src[1], s->gime_pending & s->gime_firen);
+}
+
+void coco3_gime_cart_raise(Coco3State *s)
+{
+    s->gime_pending |= GIME_IRQ_CART;
+    coco3_gime_update_irqs(s);
 }
 
 static void coco3_irq_src(void *opaque, int n, int level)
@@ -371,6 +378,9 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
         break;
     case GIME_R_IRQEN:
         s->gime_irqen = data;
+        if (s->mouse_irq) {
+            s->gime_pending |= GIME_IRQ_CART;
+        }
         coco3_gime_update_irqs(s);
         break;
     case GIME_R_FIREN:
@@ -612,54 +622,48 @@ static void coco3_joy_pin(void *opaque, int n G_GNUC_UNUSED,
     coco3_keyboard_scan(opaque);
 }
 
+void coco3_joy_ms_buttons(Coco3State *s, bool left, bool right)
+{
+    s->joy_buttons &= ~(COCO3_JOY_BTN_R1 | COCO3_JOY_BTN_R2);
+    if (left) {
+        s->joy_buttons |= COCO3_JOY_BTN_R1;
+    }
+    if (right) {
+        s->joy_buttons |= COCO3_JOY_BTN_R2;
+    }
+    coco3_keyboard_scan(s);
+}
+
 static void coco3_pointer_event(DeviceState *dev,
                                 QemuConsole *src G_GNUC_UNUSED,
                                 InputEvent *evt)
 {
     Coco3State *s = COCO3(dev);
     InputMoveEvent *move;
-    InputBtnEvent *btn;
 
-    switch (evt->type) {
-    case INPUT_EVENT_KIND_ABS:
-        move = evt->u.abs.data;
-        if (move->axis == INPUT_AXIS_X) {
-            s->joy_axis[COCO3_JOY_RX] =
-                qemu_input_scale_axis(move->value,
-                                      INPUT_EVENT_ABS_MIN, INPUT_EVENT_ABS_MAX,
-                                      0, COCO3_JOY_MAX);
-        } else if (move->axis == INPUT_AXIS_Y) {
-            s->joy_axis[COCO3_JOY_RY] =
-                qemu_input_scale_axis(move->value,
-                                      INPUT_EVENT_ABS_MIN, INPUT_EVENT_ABS_MAX,
-                                      0, COCO3_JOY_MAX);
-        }
-        break;
-    case INPUT_EVENT_KIND_BTN:
-        btn = evt->u.btn.data;
-        if (btn->button == INPUT_BUTTON_LEFT) {
-            if (btn->down) {
-                s->joy_buttons |= COCO3_JOY_BTN_R1;
-            } else {
-                s->joy_buttons &= ~COCO3_JOY_BTN_R1;
-            }
-        } else if (btn->button == INPUT_BUTTON_RIGHT) {
-            if (btn->down) {
-                s->joy_buttons |= COCO3_JOY_BTN_R2;
-            } else {
-                s->joy_buttons &= ~COCO3_JOY_BTN_R2;
-            }
-        }
-        break;
-    default:
+    if (evt->type != INPUT_EVENT_KIND_ABS) {
         return;
+    }
+    move = evt->u.abs.data;
+    if (move->axis == INPUT_AXIS_X) {
+        s->joy_axis[COCO3_JOY_RX] =
+            qemu_input_scale_axis(move->value,
+                                  INPUT_EVENT_ABS_MIN,
+                                  INPUT_EVENT_ABS_MAX,
+                                  0, COCO3_JOY_MAX);
+    } else if (move->axis == INPUT_AXIS_Y) {
+        s->joy_axis[COCO3_JOY_RY] =
+            qemu_input_scale_axis(move->value,
+                                  INPUT_EVENT_ABS_MIN,
+                                  INPUT_EVENT_ABS_MAX,
+                                  0, COCO3_JOY_MAX);
     }
     coco3_keyboard_scan(s);
 }
 
 static const QemuInputHandler coco3_pointer_handler = {
     .name = "coco3-joystick",
-    .mask = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS,
+    .mask = INPUT_EVENT_MASK_ABS,
     .event = coco3_pointer_event,
 };
 
@@ -927,7 +931,9 @@ static void coco3_realize(DeviceState *dev, Error **errp)
 
     s->kbd_hs = qemu_input_handler_register(dev, &coco3_keyboard_handler);
     s->ptr_hs = qemu_input_handler_register(dev, &coco3_pointer_handler);
-    qemu_input_handler_activate(s->ptr_hs);
+    coco3_mouse_init(s);
+    memory_region_add_subregion_overlap(sysmem, COCO3_MOUSE_BASE,
+                                        &s->mouse_io, COCO3_IO_PRIORITY);
 
     s->cart = qdev_get_gpio_in_named(DEVICE(&s->pia1), "CB1", 0);
     s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, coco3_frame_tick, s);
@@ -936,6 +942,7 @@ static void coco3_realize(DeviceState *dev, Error **errp)
 
     coco3_gime_reset(s);
     coco3_keyboard_reset(s);
+    coco3_mouse_reset(s);
 }
 
 static void coco3_reset_hold(Object *obj, ResetType type)
@@ -947,6 +954,7 @@ static void coco3_reset_hold(Object *obj, ResetType type)
 
     coco3_gime_reset(s);
     coco3_keyboard_reset(s);
+    coco3_mouse_reset(s);
     cpu_reset(CPU(&s->cpu));
 
     /* -kernel: boot-track entry. -bios: RESET vector in the ROM. */
@@ -1029,6 +1037,7 @@ static void coco3_unrealize(DeviceState *dev)
 
     g_clear_pointer(&s->kbd_hs, qemu_input_handler_unregister);
     g_clear_pointer(&s->ptr_hs, qemu_input_handler_unregister);
+    g_clear_pointer(&s->mouse_hs, qemu_input_handler_unregister);
 }
 
 static void coco3_instance_init(Object *obj)

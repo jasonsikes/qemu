@@ -6,6 +6,7 @@ m6809_ss.add(when: 'CONFIG_COCO3', if_true: files(
   'boot.c',
   'coco3.c',
   'coco3_video.c',
+  'coco3_mouse.c',
   'virt_disk.c',
   'virt_cons.c',
   'virt_rtc.c',

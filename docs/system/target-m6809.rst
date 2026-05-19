@@ -14,9 +14,11 @@ The ``coco3`` machine includes:
 - Keyboard matrix on PIA0 (US-QWERTY glyphs: A is A, Shift-2 is @,
   Break is Esc, Clear is F12; each press is held for two 60 Hz frames)
 - Analog joysticks: 6-bit DAC on PIA1 ``$FF20`` bits 2–7, mux on PIA0
-  CA2/CB2, comparator on PIA0 PA7. Fire buttons on PA0–PA3. The host
-  pointer is an absolute tablet on the right stick (left/right buttons
-  are the right-stick fire buttons). The left stick stays centered.
+  CA2/CB2, comparator on PIA0 PA7. Fire buttons on PA0–PA3 (host mouse
+  buttons). Axes stay centered unless an absolute pointer event is sent.
+- Microsoft serial mouse on a 65C52 at ``$FF64`` (NitrOS-9
+  ``joydrv_6552M``). Host pointer motion is relative; Rx full raises
+  GIME CART (``$FF92`` bit 0).
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
 - Virt disk at ``$FF30`` (first ``-drive``)
 - Virt RTC at ``$FF50`` (host time; ``-rtc``; NitrOS-9 ``Clock2``)
