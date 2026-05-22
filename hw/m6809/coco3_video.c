@@ -550,11 +550,14 @@ static void coco3_draw_vdg_text(Coco3State *s, DisplaySurface *surface)
             uint32_t on, off;
             uint8_t bits;
 
-            /* Bit 7 is semigraphics-4; leave the cell background for now. */
             if (ch & 0x80) {
-                bits = 0;
-                on = fg;
-                off = bg;
+                /* SG4: $80–$FF. Bits 3–0 are UL/UR/LL/LR in an 8×12
+                 * cell; bits 6–4 select palette 0–7. Off is palette 8. */
+                uint8_t nib = (line < 6) ? (ch >> 2) : ch;
+
+                bits = ((nib & 2) ? 0xf0 : 0) | ((nib & 1) ? 0x0f : 0);
+                on = s->palette_rgb[(ch >> 4) & 7];
+                off = s->palette_rgb[8];
             } else {
                 bits = coco3_vdg_glyph_row(ch, line);
                 /* Codes $40–$7F are inverse alphanumeric. */
