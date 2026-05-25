@@ -26,7 +26,8 @@ The ``coco3`` machine includes:
   the documented HRES/CRES pairs, 192/200/225 lines) and 32/40/64/80-column
   text (8×8 glyphs). With ``INIT0.COCO`` (set on ``-bios``
   reset), VDG-compat 32×16 text (including SG4 codes ``$80``–``$FF``)
-  and PMODE 4 (256×192×2) use SAM F0–F6 / V0–V2 and PIA1 ``$FF22``.
+  and PMODE 0–4 (128×96/192 and 256×192) use SAM F0–F6 / V0–V2 and
+  PIA1 ``$FF22``.
 - 60 Hz GIME vertical border interrupt
 
 ``-kernel`` loads a boot track at ``$2600`` and starts at ``$2602``.
