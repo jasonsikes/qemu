@@ -454,6 +454,13 @@ static void coco3_fill_border(Coco3State *s, DisplaySurface *surface)
     coco3_fill_surface(surface, gime_rgb_to_pixel(s->border & GIME_COLOR_MASK));
 }
 
+/* Duplicate the active pixels onto the next host line (4:3 scanline double). */
+static void coco3_finish_scanline(uint8_t **d, int stride, int width)
+{
+    memcpy(*d + stride, *d, (size_t)width * 4);
+    *d += (size_t)COCO3_YSCALE * stride;
+}
+
 static uint32_t coco3_vdg_border_pixel(const Coco3State *s)
 {
     uint8_t ff22 = coco3_vdg_ff22(s);
@@ -481,7 +488,7 @@ static void coco3_draw_gime_gfx(Coco3State *s, DisplaySurface *surface)
     int mask = (1 << bpp) - 1;
     int width = bpl * px_per_byte;
     int x0 = (COCO3_DISPLAY_WIDTH - width) / 2;
-    int y0 = (COCO3_DISPLAY_HEIGHT - lpf) / 2;
+    int y0 = (COCO3_RASTER_HEIGHT - lpf) / 2;
     int x, y, i;
 
     if (lpr < 1) {
@@ -489,7 +496,7 @@ static void coco3_draw_gime_gfx(Coco3State *s, DisplaySurface *surface)
     }
 
     coco3_fill_border(s, surface);
-    d += (size_t)y0 * stride + (size_t)x0 * 4;
+    d += (size_t)y0 * COCO3_YSCALE * stride + (size_t)x0 * 4;
 
     for (y = 0; y < lpf; y++) {
         uint32_t *p = (uint32_t *)d;
@@ -503,7 +510,7 @@ static void coco3_draw_gime_gfx(Coco3State *s, DisplaySurface *surface)
                 p[px++] = s->palette_rgb[(b >> (i * bpp)) & mask];
             }
         }
-        d += stride;
+        coco3_finish_scanline(&d, stride, width);
     }
 }
 
@@ -522,11 +529,11 @@ static void coco3_draw_gime_text(Coco3State *s, DisplaySurface *surface,
     int xscale = (cols <= 40) ? 2 : 1;
     int width = cols * 8 * xscale;
     int x0 = (COCO3_DISPLAY_WIDTH - width) / 2;
-    int y0 = (COCO3_DISPLAY_HEIGHT - lpf) / 2;
+    int y0 = (COCO3_RASTER_HEIGHT - lpf) / 2;
     int y, col, bit, k;
 
     coco3_fill_border(s, surface);
-    d += (size_t)y0 * stride + (size_t)x0 * 4;
+    d += (size_t)y0 * COCO3_YSCALE * stride + (size_t)x0 * 4;
 
     for (y = 0; y < lpf; y++) {
         uint32_t *p = (uint32_t *)d;
@@ -563,7 +570,7 @@ static void coco3_draw_gime_text(Coco3State *s, DisplaySurface *surface,
                 }
             }
         }
-        d += stride;
+        coco3_finish_scanline(&d, stride, width);
     }
 }
 
@@ -578,11 +585,11 @@ static void coco3_draw_vdg_text(Coco3State *s, DisplaySurface *surface)
     uint32_t bg = s->palette_rgb[pal0];
     uint32_t fg = s->palette_rgb[pal0 + 1];
     int x0 = (COCO3_DISPLAY_WIDTH - VDG_BODY_WIDTH) / 2;
-    int y0 = (COCO3_DISPLAY_HEIGHT - VDG_HEIGHT) / 2;
+    int y0 = (COCO3_RASTER_HEIGHT - VDG_HEIGHT) / 2;
     int y, col, bit, k;
 
     coco3_fill_surface(surface, coco3_vdg_border_pixel(s));
-    d += (size_t)y0 * stride + (size_t)x0 * 4;
+    d += (size_t)y0 * COCO3_YSCALE * stride + (size_t)x0 * 4;
 
     for (y = 0; y < VDG_HEIGHT; y++) {
         uint32_t *p = (uint32_t *)d;
@@ -622,7 +629,7 @@ static void coco3_draw_vdg_text(Coco3State *s, DisplaySurface *surface)
                 }
             }
         }
-        d += stride;
+        coco3_finish_scanline(&d, stride, VDG_BODY_WIDTH);
     }
 }
 
@@ -636,7 +643,7 @@ static void coco3_draw_vdg_gfx(Coco3State *s, DisplaySurface *surface)
     int lpr = coco3_vdg_gfx_lpr(s);
     int bpl, bpp, hscale, pal0, mask, xscale;
     int x0 = (COCO3_DISPLAY_WIDTH - VDG_BODY_WIDTH) / 2;
-    int y0 = (COCO3_DISPLAY_HEIGHT - VDG_HEIGHT) / 2;
+    int y0 = (COCO3_RASTER_HEIGHT - VDG_HEIGHT) / 2;
     int x, y, i, k;
 
     coco3_vdg_gfx_params(ff22, &bpl, &bpp, &hscale, &pal0);
@@ -644,7 +651,7 @@ static void coco3_draw_vdg_gfx(Coco3State *s, DisplaySurface *surface)
     xscale = hscale * VDG_XSCALE;
 
     coco3_fill_surface(surface, coco3_vdg_border_pixel(s));
-    d += (size_t)y0 * stride + (size_t)x0 * 4;
+    d += (size_t)y0 * COCO3_YSCALE * stride + (size_t)x0 * 4;
 
     for (y = 0; y < VDG_HEIGHT; y++) {
         uint32_t *p = (uint32_t *)d;
@@ -662,7 +669,7 @@ static void coco3_draw_vdg_gfx(Coco3State *s, DisplaySurface *surface)
                 }
             }
         }
-        d += stride;
+        coco3_finish_scanline(&d, stride, VDG_BODY_WIDTH);
     }
 }
 
