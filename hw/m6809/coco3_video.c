@@ -487,9 +487,11 @@ static void coco3_draw_gime_gfx(Coco3State *s, DisplaySurface *surface)
     int px_per_byte = 8 / bpp;
     int mask = (1 << bpp) - 1;
     int width = bpl * px_per_byte;
-    int x0 = (COCO3_DISPLAY_WIDTH - width) / 2;
+    int xscale = (width == 320) ? 2 : 1;
+    int body = width * xscale;
+    int x0 = (COCO3_DISPLAY_WIDTH - body) / 2;
     int y0 = (COCO3_RASTER_HEIGHT - lpf) / 2;
-    int x, y, i;
+    int x, y, i, k;
 
     if (lpr < 1) {
         lpr = 1;
@@ -507,10 +509,14 @@ static void coco3_draw_gime_gfx(Coco3State *s, DisplaySurface *surface)
             uint8_t b = ram[(row + x) & (COCO3_RAM_SIZE - 1)];
 
             for (i = px_per_byte - 1; i >= 0; i--) {
-                p[px++] = s->palette_rgb[(b >> (i * bpp)) & mask];
+                uint32_t pix = s->palette_rgb[(b >> (i * bpp)) & mask];
+
+                for (k = 0; k < xscale; k++) {
+                    p[px++] = pix;
+                }
             }
         }
-        coco3_finish_scanline(&d, stride, width);
+        coco3_finish_scanline(&d, stride, body);
     }
 }
 
