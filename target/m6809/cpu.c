@@ -212,6 +212,13 @@ static void m6809_cpu_init(Object *obj)
     qdev_init_gpio_in(DEVICE(cpu), m6809_cpu_set_irq, M6809_NUM_IRQ_LINES);
 }
 
+static void hd6309_cpu_initfn(Object *obj)
+{
+    CPUM6809State *env = cpu_env(CPU(obj));
+
+    m6809_set_feature(env, M6809_FEATURE_6309);
+}
+
 #include "hw/core/sysemu-cpu-ops.h"
 
 static const struct SysemuCPUOps m6809_sysemu_ops = {
@@ -279,6 +286,11 @@ static const TypeInfo m6809_cpu_type_info[] = {
     {
         .name = M6809_CPU_TYPE_NAME("m6809"),
         .parent = TYPE_M6809_CPU,
+    },
+    {
+        .name = M6809_CPU_TYPE_NAME("hd6309"),
+        .parent = TYPE_M6809_CPU,
+        .instance_init = hd6309_cpu_initfn,
     },
 };
 

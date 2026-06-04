@@ -799,9 +799,12 @@ static void coco3_realize(DeviceState *dev, Error **errp)
         error_setg(errp, "coco3: RAM size must be 512 KiB");
         return;
     }
+    if (!s->cpu_type) {
+        error_setg(errp, "coco3: missing cpu-type");
+        return;
+    }
 
-    object_initialize_child(OBJECT(dev), "cpu", &s->cpu,
-                            M6809_CPU_TYPE_NAME("m6809"));
+    object_initialize_child(OBJECT(dev), "cpu", &s->cpu, s->cpu_type);
     object_property_set_bool(OBJECT(&s->cpu), "realized", true, &error_abort);
     cpu = DEVICE(&s->cpu);
 
@@ -1025,6 +1028,7 @@ static const VMStateDescription coco3_vmstate = {
 };
 
 static const Property coco3_properties[] = {
+    DEFINE_PROP_STRING("cpu-type", Coco3State, cpu_type),
     DEFINE_PROP_BOOL("fake-cart-firq", Coco3State, fake_cart_firq, false),
     DEFINE_PROP_BOOL("os9-kernel", Coco3State, os9_kernel, false),
     DEFINE_PROP_LINK("ram", Coco3State, ram, TYPE_MEMORY_REGION,

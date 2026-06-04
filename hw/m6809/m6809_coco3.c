@@ -39,6 +39,8 @@ static void coco3_machine_init(MachineState *machine)
 
     object_initialize_child(OBJECT(machine), "sys", &s->sys,
                             TYPE_COCO3);
+    object_property_set_str(OBJECT(&s->sys), "cpu-type",
+                            machine->cpu_type, &error_abort);
     object_property_set_link(OBJECT(&s->sys), "ram",
                              OBJECT(machine->ram), &error_abort);
     object_property_set_bool(OBJECT(&s->sys), "fake-cart-firq",
@@ -85,6 +87,11 @@ static void coco3_set_fake_cart_firq(Object *obj, bool value, Error **errp)
 
 static void coco3_machine_class_init(ObjectClass *oc, const void *data)
 {
+    static const char * const valid_cpu_types[] = {
+        M6809_CPU_TYPE_NAME("m6809"),
+        M6809_CPU_TYPE_NAME("hd6309"),
+        NULL
+    };
     MachineClass *mc = MACHINE_CLASS(oc);
 
     object_class_property_add_bool(oc, "fake-cart-firq",
@@ -95,6 +102,8 @@ static void coco3_machine_class_init(ObjectClass *oc, const void *data)
 
     mc->desc = "Tandy/Radio Shack Color Computer 3";
     mc->init = coco3_machine_init;
+    mc->default_cpu_type = M6809_CPU_TYPE_NAME("m6809");
+    mc->valid_cpu_types = valid_cpu_types;
     mc->default_cpus = 1;
     mc->min_cpus = mc->default_cpus;
     mc->max_cpus = mc->default_cpus;

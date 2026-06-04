@@ -78,6 +78,16 @@
 #define EXCP_FIRQ    2
 #define EXCP_NMI     3
 
+/*
+ * Independent CPU-model bits. 6309 and Turbo9 are both 6809 supersets;
+ * they must not share a boolean. Set at instance_init; reset must not
+ * clear them.
+ */
+enum m6809_features {
+    M6809_FEATURE_6309,
+    M6809_FEATURE_TURBO9,
+};
+
 typedef struct CPUArchState {
     uint32_t a;
     uint32_t b;
@@ -106,6 +116,9 @@ typedef struct CPUArchState {
      * This survives reset so a device holding a line asserted is not lost.
      */
     uint32_t intsrc;
+
+    /* Independent CPU-model bits. Set at instance_init; survives reset. */
+    uint64_t features;
 } CPUM6809State;
 
 /**
@@ -143,6 +156,16 @@ int m6809_print_insn(bfd_vma addr, disassemble_info *info);
 void m6809_tcg_init(void);
 void m6809_translate_code(CPUState *cs, TranslationBlock *tb,
                           int *max_insns, vaddr pc, void *host_pc);
+
+static inline bool m6809_feature(CPUM6809State *env, int feature)
+{
+    return (env->features & BIT_ULL(feature)) != 0;
+}
+
+static inline void m6809_set_feature(CPUM6809State *env, int feature)
+{
+    env->features |= BIT_ULL(feature);
+}
 
 static inline uint16_t m6809_get_d(CPUM6809State *env)
 {

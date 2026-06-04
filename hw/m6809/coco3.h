@@ -101,6 +101,7 @@ struct Coco3State {
 
     /*< public >*/
     M6809CPU cpu;
+    char *cpu_type;
     MemoryRegion *ram;
     MemoryRegion rom;
 
