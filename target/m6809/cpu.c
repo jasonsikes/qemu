@@ -50,8 +50,13 @@ static vaddr m6809_cpu_get_pc(CPUState *cs)
 static TCGTBCPUState m6809_get_tb_cpu_state(CPUState *cs)
 {
     CPUM6809State *env = cpu_env(cs);
+    uint32_t flags = 0;
 
-    return (TCGTBCPUState){ .pc = env->pc, .flags = 0 };
+    if (m6809_feature(env, M6809_FEATURE_6309) && (env->md & MD_NM)) {
+        flags |= TB_FLAGS_NATIVE;
+    }
+
+    return (TCGTBCPUState){ .pc = env->pc, .flags = flags };
 }
 
 static void m6809_cpu_synchronize_from_tb(CPUState *cs,
@@ -105,6 +110,7 @@ static void m6809_cpu_reset_hold(Object *obj, ResetType type)
     memset(env, 0, offsetof(CPUM6809State, end_reset_fields));
 
     env->cc = CC_I | CC_F;
+    /* MD, E, F, V are already 0: emulation mode, short FIRQ. */
 
     resetvec = rom_ptr(M6809_VEC_RESET, 2);
     if (resetvec) {
@@ -174,6 +180,13 @@ static void m6809_cpu_dump_state(CPUState *cs, FILE *f, int flags)
                  (env->cc & CC_Z) ? 'Z' : '.',
                  (env->cc & CC_V) ? 'V' : '.',
                  (env->cc & CC_C) ? 'C' : '.');
+    if (m6809_feature(env, M6809_FEATURE_6309)) {
+        qemu_fprintf(f, "E=%02x    F=%02x   W=%04x\n",
+                     env->e, env->f, m6809_get_w(env));
+        qemu_fprintf(f, "V=%04x  MD=%02x [NM=%d FM=%d]\n",
+                     env->v, env->md,
+                     !!(env->md & MD_NM), !!(env->md & MD_FM));
+    }
 }
 
 /*

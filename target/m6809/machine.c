@@ -22,9 +22,30 @@
 #include "cpu.h"
 #include "migration/vmstate.h"
 
+static bool vmstate_hd6309_needed(void *opaque)
+{
+    M6809CPU *cpu = opaque;
+
+    return m6809_feature(&cpu->env, M6809_FEATURE_6309);
+}
+
+static const VMStateDescription vmstate_hd6309 = {
+    .name = "cpu/hd6309",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = vmstate_hd6309_needed,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT32(env.e, M6809CPU),
+        VMSTATE_UINT32(env.f, M6809CPU),
+        VMSTATE_UINT32(env.v, M6809CPU),
+        VMSTATE_UINT32(env.md, M6809CPU),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 const VMStateDescription vms_m6809_cpu = {
     .name = "cpu",
-    .version_id = 2,
+    .version_id = 3,
     .minimum_version_id = 2,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT32(env.a, M6809CPU),
@@ -40,5 +61,9 @@ const VMStateDescription vms_m6809_cpu = {
         VMSTATE_BOOL(env.nmi_armed, M6809CPU),
         VMSTATE_UINT32(env.intsrc, M6809CPU),
         VMSTATE_END_OF_LIST()
+    },
+    .subsections = (const VMStateDescription * const []) {
+        &vmstate_hd6309,
+        NULL
     }
 };

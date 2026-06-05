@@ -43,6 +43,17 @@
 #define CC_F    0x40
 #define CC_E    0x80
 
+/* 6309 MD (mode) register. Bits 2–5 are unused. */
+#define MD_NM   0x01 /* native-mode stacking */
+#define MD_FM   0x02 /* FIRQ uses entire frame */
+#define MD_IL   0x40 /* illegal-opcode trap sticky */
+#define MD_DZ   0x80 /* divide-by-zero trap sticky */
+
+/* Translation-block flags (m6809_get_tb_cpu_state). */
+enum {
+    TB_FLAGS_NATIVE = 1, /* MD.NM; 6309 only */
+};
+
 /* Architectural reset / IRQ / FIRQ / SWI / NMI vectors. */
 #define M6809_VEC_RESET  0xfffe
 #define M6809_VEC_NMI    0xfffc
@@ -98,6 +109,12 @@ typedef struct CPUArchState {
     uint32_t pc;
     uint32_t dp;
     uint32_t cc;
+
+    /* 6309 extra state; unused (and zero) on a 6809. W = E:F, Q = D:W. */
+    uint32_t e;
+    uint32_t f;
+    uint32_t v;
+    uint32_t md;
 
     uint32_t wait_state; /* M6809_WAIT_* */
 
@@ -176,6 +193,28 @@ static inline void m6809_set_d(CPUM6809State *env, uint16_t d)
 {
     env->a = d >> 8;
     env->b = d & 0xff;
+}
+
+static inline uint16_t m6809_get_w(CPUM6809State *env)
+{
+    return ((uint16_t)env->e << 8) | env->f;
+}
+
+static inline void m6809_set_w(CPUM6809State *env, uint16_t w)
+{
+    env->e = w >> 8;
+    env->f = w & 0xff;
+}
+
+static inline uint32_t m6809_get_q(CPUM6809State *env)
+{
+    return ((uint32_t)m6809_get_d(env) << 16) | m6809_get_w(env);
+}
+
+static inline void m6809_set_q(CPUM6809State *env, uint32_t q)
+{
+    m6809_set_d(env, q >> 16);
+    m6809_set_w(env, q & 0xffff);
 }
 
 static inline int m6809_cpu_pending_interrupt(CPUM6809State *env)

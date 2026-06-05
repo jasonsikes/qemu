@@ -43,6 +43,7 @@
 typedef struct DisasContext {
     DisasContextBase base;
     CPUM6809State *env;
+    bool native; /* TB_FLAGS_NATIVE: 6309 MD.NM */
 } DisasContext;
 
 static TCGv_i32 cpu_a;
@@ -54,6 +55,10 @@ static TCGv_i32 cpu_s;
 static TCGv_i32 cpu_pc;
 static TCGv_i32 cpu_dp;
 static TCGv_i32 cpu_cc;
+static TCGv_i32 cpu_e;
+static TCGv_i32 cpu_f;
+static TCGv_i32 cpu_v;
+static TCGv_i32 cpu_md;
 
 void m6809_tcg_init(void)
 {
@@ -75,6 +80,14 @@ void m6809_tcg_init(void)
                                     offsetof(CPUM6809State, dp), "DP");
     cpu_cc = tcg_global_mem_new_i32(tcg_env,
                                     offsetof(CPUM6809State, cc), "CC");
+    cpu_e = tcg_global_mem_new_i32(tcg_env,
+                                   offsetof(CPUM6809State, e), "E");
+    cpu_f = tcg_global_mem_new_i32(tcg_env,
+                                   offsetof(CPUM6809State, f), "F");
+    cpu_v = tcg_global_mem_new_i32(tcg_env,
+                                   offsetof(CPUM6809State, v), "V");
+    cpu_md = tcg_global_mem_new_i32(tcg_env,
+                                    offsetof(CPUM6809State, md), "MD");
 }
 
 static uint32_t decode_insn_load_bytes(DisasContext *ctx, uint32_t insn,
@@ -2214,6 +2227,7 @@ static void m6809_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     DisasContext *ctx = container_of(dcbase, DisasContext, base);
 
     ctx->env = cpu_env(cs);
+    ctx->native = (ctx->base.tb->flags & TB_FLAGS_NATIVE) != 0;
 }
 
 static void m6809_tr_tb_start(DisasContextBase *dcbase, CPUState *cs)
