@@ -82,7 +82,7 @@ static bool format_indexed(DisasContext *ctx, char *buffer, size_t size)
         return false;
     }
 
-    if (!m6809_decode_indexed(post, &mode)) {
+    if (!m6809_decode_indexed(post, true, &mode)) {
         return false;
     }
 
@@ -112,6 +112,21 @@ static bool format_indexed(DisasContext *ctx, char *buffer, size_t size)
     case M6809_IDX_A:
         snprintf(inner, sizeof(inner), "a,%s", registers[mode.reg]);
         break;
+    case M6809_IDX_E:
+        snprintf(inner, sizeof(inner), "e,%s", registers[mode.reg]);
+        break;
+    case M6809_IDX_F:
+        snprintf(inner, sizeof(inner), "f,%s", registers[mode.reg]);
+        break;
+    case M6809_IDX_W:
+        snprintf(inner, sizeof(inner), ",w");
+        break;
+    case M6809_IDX_W_POSTINC2:
+        snprintf(inner, sizeof(inner), ",w++");
+        break;
+    case M6809_IDX_W_PREDEC2:
+        snprintf(inner, sizeof(inner), ",--w");
+        break;
     case M6809_IDX_OFFSET8:
     case M6809_IDX_PCR8:
         if (!indexed_read8(ctx, &byte)) {
@@ -124,6 +139,7 @@ static bool format_indexed(DisasContext *ctx, char *buffer, size_t size)
     case M6809_IDX_OFFSET16:
     case M6809_IDX_PCR16:
     case M6809_IDX_EXTENDED_INDIRECT:
+    case M6809_IDX_W_OFFSET16:
         if (!indexed_read8(ctx, &byte)) {
             return false;
         }
@@ -138,11 +154,15 @@ static bool format_indexed(DisasContext *ctx, char *buffer, size_t size)
             snprintf(inner, sizeof(inner), "%d,%s",
                      sextract32(word, 0, 16),
                      mode.kind == M6809_IDX_PCR16 ? "pcr" :
+                     mode.kind == M6809_IDX_W_OFFSET16 ? "w" :
                      registers[mode.reg]);
         }
         break;
     case M6809_IDX_D:
         snprintf(inner, sizeof(inner), "d,%s", registers[mode.reg]);
+        break;
+    case M6809_IDX_W_OFF:
+        snprintf(inner, sizeof(inner), "w,%s", registers[mode.reg]);
         break;
     default:
         g_assert_not_reached();

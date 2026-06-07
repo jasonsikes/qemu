@@ -61,15 +61,32 @@ void helper_daa(CPUM6809State *env)
     }
 }
 
-/* No illegal-instruction vector; halt with PC at the faulting opcode. */
+/* 6809: no illegal-instruction vector; halt with PC at the faulting opcode.
+ * 6309: set MD.IL and trap (full frame, like SWI; I/F unchanged).
+ */
 G_NORETURN void helper_raise_illegal_instruction(CPUM6809State *env)
 {
     CPUState *cs = env_cpu(env);
+
+    if (m6809_feature(env, M6809_FEATURE_6309)) {
+        env->md |= MD_IL;
+        cs->exception_index = EXCP_ILLEGAL;
+        cpu_loop_exit(cs);
+    }
 
     qemu_log_mask(LOG_UNIMP, "m6809: illegal instruction at PC=%04x\n",
                   env->pc);
     cs->halted = 1;
     cs->exception_index = EXCP_HLT;
+    cpu_loop_exit(cs);
+}
+
+G_NORETURN void helper_raise_division_by_zero(CPUM6809State *env)
+{
+    CPUState *cs = env_cpu(env);
+
+    env->md |= MD_DZ;
+    cs->exception_index = EXCP_DIV0;
     cpu_loop_exit(cs);
 }
 
@@ -126,6 +143,14 @@ void m6809_cpu_do_interrupt(CPUState *cs)
     case EXCP_IRQ:
         vector = M6809_VEC_IRQ;
         set_mask = CC_I;
+        break;
+    case EXCP_ILLEGAL:
+        vector = M6309_VEC_ILLEGAL;
+        set_mask = 0;
+        break;
+    case EXCP_DIV0:
+        vector = M6309_VEC_DIV0;
+        set_mask = 0;
         break;
     default:
         g_assert_not_reached();

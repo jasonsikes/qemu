@@ -129,6 +129,18 @@ static void gen_set_d(TCGv_i32 d)
     tcg_gen_ext8u_i32(cpu_a, cpu_a);
 }
 
+static void gen_get_w(TCGv_i32 w)
+{
+    tcg_gen_deposit_i32(w, cpu_f, cpu_e, 8, 8);
+}
+
+static void gen_set_w(TCGv_i32 w)
+{
+    tcg_gen_ext8u_i32(cpu_f, w);
+    tcg_gen_shri_i32(cpu_e, w, 8);
+    tcg_gen_ext8u_i32(cpu_e, cpu_e);
+}
+
 /* Set N and Z from an 8-bit result. Caller has already cleared those bits. */
 static void gen_set_nz8(TCGv_i32 r)
 {
@@ -576,6 +588,10 @@ static void gen_st8(TCGv_i32 ea, TCGv_i32 val)
 
 static void gen_illegal(DisasContext *ctx)
 {
+    if (m6809_feature(ctx->env, M6809_FEATURE_6309)) {
+        /* Stacked PC is the following instruction, so RTI skips the trap. */
+        tcg_gen_movi_i32(cpu_pc, ctx->base.pc_next & 0xffff);
+    }
     gen_helper_raise_illegal_instruction(tcg_env);
     ctx->base.is_jmp = DISAS_NORETURN;
 }
@@ -785,7 +801,9 @@ static bool gen_ea_indexed(DisasContext *ctx, TCGv_i32 *result)
 
     translator_io_start(&ctx->base);
 
-    if (!m6809_decode_indexed(post, &mode)) {
+    if (!m6809_decode_indexed(post,
+                              m6809_feature(ctx->env, M6809_FEATURE_6309),
+                              &mode)) {
         gen_illegal(ctx);
         return false;
     }
@@ -801,6 +819,27 @@ static bool gen_ea_indexed(DisasContext *ctx, TCGv_i32 *result)
     case M6809_IDX_PCR16:
         displacement = sextract32(indexed_fetch16(ctx), 0, 16);
         tcg_gen_movi_i32(ea, (ctx->base.pc_next + displacement) & 0xffff);
+        break;
+    case M6809_IDX_W:
+        gen_get_w(ea);
+        break;
+    case M6809_IDX_W_OFFSET16:
+        gen_get_w(ea);
+        displacement = sextract32(indexed_fetch16(ctx), 0, 16);
+        tcg_gen_addi_i32(ea, ea, displacement);
+        break;
+    case M6809_IDX_W_POSTINC2:
+        gen_get_w(ea);
+        offset = tcg_temp_new_i32();
+        tcg_gen_addi_i32(offset, ea, 2);
+        tcg_gen_andi_i32(offset, offset, 0xffff);
+        gen_set_w(offset);
+        break;
+    case M6809_IDX_W_PREDEC2:
+        gen_get_w(ea);
+        tcg_gen_subi_i32(ea, ea, 2);
+        tcg_gen_andi_i32(ea, ea, 0xffff);
+        gen_set_w(ea);
         break;
     default:
         base = indexed_reg(mode.reg);
@@ -835,6 +874,16 @@ static bool gen_ea_indexed(DisasContext *ctx, TCGv_i32 *result)
             tcg_gen_ext8s_i32(offset, cpu_a);
             tcg_gen_add_i32(ea, ea, offset);
             break;
+        case M6809_IDX_E:
+            offset = tcg_temp_new_i32();
+            tcg_gen_ext8s_i32(offset, cpu_e);
+            tcg_gen_add_i32(ea, ea, offset);
+            break;
+        case M6809_IDX_F:
+            offset = tcg_temp_new_i32();
+            tcg_gen_ext8s_i32(offset, cpu_f);
+            tcg_gen_add_i32(ea, ea, offset);
+            break;
         case M6809_IDX_OFFSET8:
             tcg_gen_addi_i32(ea, ea, (int8_t)indexed_fetch8(ctx));
             break;
@@ -845,6 +894,12 @@ static bool gen_ea_indexed(DisasContext *ctx, TCGv_i32 *result)
         case M6809_IDX_D:
             offset = tcg_temp_new_i32();
             gen_get_d(offset);
+            tcg_gen_ext16s_i32(offset, offset);
+            tcg_gen_add_i32(ea, ea, offset);
+            break;
+        case M6809_IDX_W_OFF:
+            offset = tcg_temp_new_i32();
+            gen_get_w(offset);
             tcg_gen_ext16s_i32(offset, offset);
             tcg_gen_add_i32(ea, ea, offset);
             break;
@@ -2049,16 +2104,39 @@ static bool trans_STS_ext(DisasContext *ctx, arg_STS_ext *a)
 }
 
 /*
- * TFR postbyte: source in bits 7:4, destination in bits 3:0.
- * 0=D 1=X 2=Y 3=U 4=S 5=PC  8=A 9=B A=CC B=DP
+ * TFR/EXG postbyte: source in bits 7:4, destination in bits 3:0.
+ * 6809: 0=D 1=X 2=Y 3=U 4=S 5=PC  8=A 9=B A=CC B=DP
+ * 6309 adds: 6=W 7=V  C/D=Zero  E=E F=F
+ *
+ * 6809 8→16 fills the high byte with $FF. 6309 (MAME / Atkinson) reads
+ * 8-bit registers as a duplicated byte and writes A/E/DP from the high
+ * byte, B/F/CC from the low byte. Zero reads 0 and discards writes.
  */
 static bool tfr_is_16(int r)
 {
     return r <= 5;
 }
 
+static bool tfr_has_6309(DisasContext *ctx)
+{
+    return m6809_feature(ctx->env, M6809_FEATURE_6309);
+}
+
+static void tfr_dup8(TCGv_i32 tmp, TCGv_i32 r)
+{
+    tcg_gen_deposit_i32(tmp, r, r, 8, 8);
+}
+
+static void tfr_write_hi(TCGv_i32 dest, TCGv_i32 val)
+{
+    tcg_gen_shri_i32(dest, val, 8);
+    tcg_gen_ext8u_i32(dest, dest);
+}
+
 static TCGv_i32 tfr_read(DisasContext *ctx, int r, TCGv_i32 tmp)
 {
+    bool hd6309 = tfr_has_6309(ctx);
+
     switch (r) {
     case 0:
         gen_get_d(tmp);
@@ -2074,14 +2152,60 @@ static TCGv_i32 tfr_read(DisasContext *ctx, int r, TCGv_i32 tmp)
     case 5:
         tcg_gen_movi_i32(tmp, ctx->base.pc_next);
         return tmp;
+    case 6:
+        if (!hd6309) {
+            return NULL;
+        }
+        gen_get_w(tmp);
+        return tmp;
+    case 7:
+        if (!hd6309) {
+            return NULL;
+        }
+        return cpu_v;
     case 8:
+        if (hd6309) {
+            tfr_dup8(tmp, cpu_a);
+            return tmp;
+        }
         return cpu_a;
     case 9:
+        if (hd6309) {
+            tfr_dup8(tmp, cpu_b);
+            return tmp;
+        }
         return cpu_b;
     case 10:
+        if (hd6309) {
+            tfr_dup8(tmp, cpu_cc);
+            return tmp;
+        }
         return cpu_cc;
     case 11:
+        if (hd6309) {
+            tfr_dup8(tmp, cpu_dp);
+            return tmp;
+        }
         return cpu_dp;
+    case 12:
+    case 13:
+        if (!hd6309) {
+            return NULL;
+        }
+        tcg_gen_movi_i32(tmp, 0);
+        return tmp;
+    case 14:
+        if (!hd6309) {
+            return NULL;
+        }
+        tfr_dup8(tmp, cpu_e);
+        return tmp;
+    case 15:
+        if (!hd6309) {
+            return NULL;
+        }
+        tfr_dup8(tmp, cpu_f);
+        return tmp;
     default:
         return NULL;
     }
@@ -2089,6 +2213,8 @@ static TCGv_i32 tfr_read(DisasContext *ctx, int r, TCGv_i32 tmp)
 
 static void tfr_write(DisasContext *ctx, int r, TCGv_i32 val)
 {
+    bool hd6309 = tfr_has_6309(ctx);
+
     switch (r) {
     case 0:
         gen_set_d(val);
@@ -2110,8 +2236,18 @@ static void tfr_write(DisasContext *ctx, int r, TCGv_i32 val)
         tcg_gen_andi_i32(cpu_pc, val, 0xffff);
         ctx->base.is_jmp = DISAS_JUMP;
         break;
+    case 6:
+        gen_set_w(val);
+        break;
+    case 7:
+        tcg_gen_andi_i32(cpu_v, val, 0xffff);
+        break;
     case 8:
-        tcg_gen_ext8u_i32(cpu_a, val);
+        if (hd6309) {
+            tfr_write_hi(cpu_a, val);
+        } else {
+            tcg_gen_ext8u_i32(cpu_a, val);
+        }
         break;
     case 9:
         tcg_gen_ext8u_i32(cpu_b, val);
@@ -2120,7 +2256,20 @@ static void tfr_write(DisasContext *ctx, int r, TCGv_i32 val)
         tcg_gen_ext8u_i32(cpu_cc, val);
         break;
     case 11:
-        tcg_gen_ext8u_i32(cpu_dp, val);
+        if (hd6309) {
+            tfr_write_hi(cpu_dp, val);
+        } else {
+            tcg_gen_ext8u_i32(cpu_dp, val);
+        }
+        break;
+    case 12:
+    case 13:
+        break;
+    case 14:
+        tfr_write_hi(cpu_e, val);
+        break;
+    case 15:
+        tcg_gen_ext8u_i32(cpu_f, val);
         break;
     default:
         break;
@@ -2133,27 +2282,30 @@ static bool trans_TFR(DisasContext *ctx, arg_TFR *a)
     int dst = a->post & 0xf;
     TCGv_i32 tmp = tcg_temp_new_i32();
     TCGv_i32 val;
+    bool hd6309 = tfr_has_6309(ctx);
 
     val = tfr_read(ctx, src, tmp);
     if (!val) {
         gen_illegal(ctx);
         return true;
     }
-
-    if (tfr_is_16(src) && !tfr_is_16(dst)) {
-        tcg_gen_ext8u_i32(tmp, val);
-        val = tmp;
-    } else if (!tfr_is_16(src) && tfr_is_16(dst)) {
-        /* 8-bit source to 16-bit dest: high byte is $FF. */
-        tcg_gen_ori_i32(tmp, val, 0xff00);
-        val = tmp;
-    }
-
-    tfr_write(ctx, dst, val);
-    if (!tfr_is_16(dst) && (dst < 8 || dst > 11)) {
+    if (!hd6309 && !tfr_is_16(dst) && (dst < 8 || dst > 11)) {
         gen_illegal(ctx);
         return true;
     }
+
+    if (!hd6309) {
+        if (tfr_is_16(src) && !tfr_is_16(dst)) {
+            tcg_gen_ext8u_i32(tmp, val);
+            val = tmp;
+        } else if (!tfr_is_16(src) && tfr_is_16(dst)) {
+            /* 8-bit source to 16-bit dest: high byte is $FF. */
+            tcg_gen_ori_i32(tmp, val, 0xff00);
+            val = tmp;
+        }
+    }
+
+    tfr_write(ctx, dst, val);
     if (dst == 10) {
         gen_exit_after_cc_write(ctx);
     }
@@ -2168,6 +2320,7 @@ static bool trans_EXG(DisasContext *ctx, arg_EXG *a)
     TCGv_i32 snap2 = tcg_temp_new_i32();
     TCGv_i32 val1;
     TCGv_i32 val2;
+    bool hd6309 = tfr_has_6309(ctx);
 
     val1 = tfr_read(ctx, r1, snap1);
     val2 = tfr_read(ctx, r2, snap2);
@@ -2179,12 +2332,14 @@ static bool trans_EXG(DisasContext *ctx, arg_EXG *a)
     tcg_gen_mov_i32(snap1, val1);
     tcg_gen_mov_i32(snap2, val2);
 
-    if (tfr_is_16(r1) && !tfr_is_16(r2)) {
-        tcg_gen_ori_i32(snap2, snap2, 0xff00);
-        tcg_gen_ext8u_i32(snap1, snap1);
-    } else if (!tfr_is_16(r1) && tfr_is_16(r2)) {
-        tcg_gen_ext8u_i32(snap2, snap2);
-        tcg_gen_ori_i32(snap1, snap1, 0xff00);
+    if (!hd6309) {
+        if (tfr_is_16(r1) && !tfr_is_16(r2)) {
+            tcg_gen_ori_i32(snap2, snap2, 0xff00);
+            tcg_gen_ext8u_i32(snap1, snap1);
+        } else if (!tfr_is_16(r1) && tfr_is_16(r2)) {
+            tcg_gen_ext8u_i32(snap2, snap2);
+            tcg_gen_ori_i32(snap1, snap1, 0xff00);
+        }
     }
 
     tfr_write(ctx, r1, snap2);

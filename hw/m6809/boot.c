@@ -51,7 +51,8 @@ bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
     g_autoptr(GError) gerr = NULL;
     uint8_t *ram_ptr;
     static const uint8_t coco3_vectors[] = {
-        0x00, 0x00, /* $FFF0 reserved */
+        0xfe, 0xee, /* $FFEE DIV0 */
+        0xfe, 0xee, /* $FFF0 illegal */
         0xfe, 0xee, /* $FFF2 SWI3 */
         0xfe, 0xf1, /* $FFF4 SWI2 */
         0xfe, 0xf4, /* $FFF6 FIRQ */

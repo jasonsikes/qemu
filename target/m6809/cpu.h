@@ -61,7 +61,9 @@ enum {
 #define M6809_VEC_IRQ    0xfff8
 #define M6809_VEC_FIRQ   0xfff6
 #define M6809_VEC_SWI2   0xfff4
-#define M6809_VEC_SWI3   0xfff2
+#define M6809_VEC_SWI3     0xfff2
+#define M6309_VEC_ILLEGAL  0xfff0
+#define M6309_VEC_DIV0     0xffee
 
 /* Meanings of the M6809CPU object's inbound GPIO lines. */
 #define M6809_CPU_IRQ   0
@@ -82,12 +84,14 @@ enum {
 #define M6809_WAIT_CWAI 2
 
 /*
- * SWI, SWI2 and SWI3 are translated inline, so only the hardware interrupts
- * need an exception index to reach m6809_cpu_do_interrupt().
+ * SWI, SWI2 and SWI3 are translated inline. Hardware IRQ/FIRQ/NMI and the
+ * 6309 illegal / divide-by-zero traps use an exception index.
  */
-#define EXCP_IRQ     1
-#define EXCP_FIRQ    2
-#define EXCP_NMI     3
+#define EXCP_IRQ      1
+#define EXCP_FIRQ     2
+#define EXCP_NMI      3
+#define EXCP_ILLEGAL  4
+#define EXCP_DIV0     5
 
 /*
  * Independent CPU-model bits. 6309 and Turbo9 are both 6809 supersets;

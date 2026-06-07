@@ -19,6 +19,7 @@
  */
 
 DEF_HELPER_1(raise_illegal_instruction, noreturn, env)
+DEF_HELPER_1(raise_division_by_zero, noreturn, env)
 DEF_HELPER_1(daa, void, env)
 DEF_HELPER_2(cwai, noreturn, env, i32)
 DEF_HELPER_1(sync, noreturn, env)

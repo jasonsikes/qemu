@@ -18,7 +18,7 @@
 #define OS9_BOOTTRACK_ADDR   0x2600
 #define OS9_BOOTTRACK_SIZE   0x1200
 #define OS9_BOOTTRACK_ENTRY  0x2602
-#define COCO3_VEC_TABLE      0xfff0
+#define COCO3_VEC_TABLE      0xffee
 
 bool m6809_load_firmware(MemoryRegion *mr, const char *firmware);
 bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,

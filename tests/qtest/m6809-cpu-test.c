@@ -220,6 +220,156 @@ static void test_invalid_indexed(void)
     ran = saved_ran;
 }
 
+static QTestState *isa_vm_cpu(const char *cpu)
+{
+    return qtest_initf("-M coco3 -cpu %s -bios %s -accel tcg,one-insn-per-tb=on -S",
+                       cpu, rom_path);
+}
+
+/* lda #$5a; tfr a,w — 6309 duplicates A into both halves of W. */
+static void test_hd6309_tfr_a_w(void)
+{
+    static const uint8_t code[] = {
+        0x86, 0x5a,             /* lda #$5a */
+        0x1f, 0x86,             /* tfr a,w */
+        0x20, 0xfe,             /* bra * */
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code), NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8004", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8004"));
+    g_assert_nonnull(strstr(regs, "E=5a"));
+    g_assert_nonnull(strstr(regs, "F=5a"));
+    g_assert_nonnull(strstr(regs, "W=5a5a"));
+    qtest_quit(s);
+}
+
+/* ldx #$ffff; tfr 0,x — Zero reads 0, so X is cleared. */
+static void test_hd6309_tfr_zero_x(void)
+{
+    static const uint8_t code[] = {
+        0x8e, 0xff, 0xff,       /* ldx #$ffff */
+        0x1f, 0xc1,             /* tfr 0,x */
+        0x20, 0xfe,             /* bra * */
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code), NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8005", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8005"));
+    g_assert_nonnull(strstr(regs, "X=0000"));
+    qtest_quit(s);
+}
+
+/* Same TFR 0,X encoding on a 6809 must halt (undefined register code). */
+static void test_m6809_tfr_zero_halts(void)
+{
+    static const uint8_t code[] = {
+        0x8e, 0xff, 0xff,       /* ldx #$ffff */
+        0x1f, 0xc1,             /* tfr 0,x (illegal on 6809) */
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("m6809");
+    isa_load(s, &local_ran, code, sizeof(code), NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8003", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8003"));
+    g_assert_nonnull(strstr(regs, "X=ffff"));
+    qtest_quit(s);
+}
+
+/* lda #$02; tfr a,e; ldx #$80f0; lda e,x */
+static void test_hd6309_index_e_x(void)
+{
+    static const uint8_t code[] = {
+        0x86, 0x02,             /* lda #$02 */
+        0x1f, 0x8e,             /* tfr a,e */
+        0x8e, 0x80, 0xf0,       /* ldx #$80f0 */
+        0xa6, 0x87,             /* lda e,x */
+        0x20, 0xfe,
+    };
+    static const uint8_t operand[] = { 0x00, 0x00, 0x99 };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code),
+             operand, sizeof(operand), NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8009", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8009"));
+    g_assert_nonnull(strstr(regs, "A=99"));
+    qtest_quit(s);
+}
+
+/* ldx #$80f0; tfr x,w; lda ,w */
+static void test_hd6309_index_w(void)
+{
+    static const uint8_t code[] = {
+        0x8e, 0x80, 0xf0,       /* ldx #$80f0 */
+        0x1f, 0x16,             /* tfr x,w */
+        0xa6, 0x8f,             /* lda ,w */
+        0x20, 0xfe,
+    };
+    static const uint8_t operand[] = { 0x42 };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code),
+             operand, sizeof(operand), NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8007", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8007"));
+    g_assert_nonnull(strstr(regs, "A=42"));
+    g_assert_nonnull(strstr(regs, "W=80f0"));
+    qtest_quit(s);
+}
+
+/* lds #$4000; $01 (illegal) — trap to $FFF0, MD.IL set, 12-byte frame. */
+static void test_hd6309_illegal_trap(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x01,                   /* illegal */
+    };
+    static const IsaLoad load[] = {
+        { 0x8100, 0x20 },       /* bra * */
+        { 0x8101, 0xfe },
+    };
+    static const IsaVec vec[] = {
+        { 0xfff0, 0x8100 },
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, load, ARRAY_SIZE(load), vec, ARRAY_SIZE(vec), false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8100", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8100"));
+    g_assert_nonnull(strstr(regs, "MD=40"));
+    g_assert_nonnull(strstr(regs, "S=3ff4"));
+    qtest_quit(s);
+}
+
 static void test_cwai_irq(void)
 {
     /* lds #$4000; enable GIME IRQ; load regs; cwai #$af; incb */
@@ -379,6 +529,12 @@ int main(int argc, char **argv)
         g_free(path);
     }
     qtest_add_func("/isa/invalid_indexed_87", test_invalid_indexed);
+    qtest_add_func("/isa/hd6309_tfr_a_w", test_hd6309_tfr_a_w);
+    qtest_add_func("/isa/hd6309_tfr_zero_x", test_hd6309_tfr_zero_x);
+    qtest_add_func("/isa/m6809_tfr_zero_halts", test_m6809_tfr_zero_halts);
+    qtest_add_func("/isa/hd6309_index_e_x", test_hd6309_index_e_x);
+    qtest_add_func("/isa/hd6309_index_w", test_hd6309_index_w);
+    qtest_add_func("/isa/hd6309_illegal_trap", test_hd6309_illegal_trap);
     qtest_add_func("/isa/cwai_irq", test_cwai_irq);
     qtest_add_func("/isa/firq_short_frame", test_firq_short_frame);
     qtest_add_func("/isa/sync_masked_falls_through", test_sync_masked);

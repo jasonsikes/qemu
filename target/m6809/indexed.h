@@ -38,6 +38,15 @@ typedef enum M6809IndexedKind {
     M6809_IDX_PCR8,
     M6809_IDX_PCR16,
     M6809_IDX_EXTENDED_INDIRECT,
+    /* 6309: E/F/W as signed offsets from X/Y/U/S. */
+    M6809_IDX_E,
+    M6809_IDX_F,
+    M6809_IDX_W_OFF,
+    /* 6309: W as the pointer. */
+    M6809_IDX_W,
+    M6809_IDX_W_OFFSET16,
+    M6809_IDX_W_POSTINC2,
+    M6809_IDX_W_PREDEC2,
 } M6809IndexedKind;
 
 typedef struct M6809IndexedMode {
@@ -47,10 +56,11 @@ typedef struct M6809IndexedMode {
     bool indirect;
 } M6809IndexedMode;
 
-static inline bool m6809_decode_indexed(uint8_t post,
+static inline bool m6809_decode_indexed(uint8_t post, bool has_6309,
                                         M6809IndexedMode *mode)
 {
     int submode;
+    uint8_t wptr;
 
     mode->reg = extract32(post, 5, 2);
     mode->indirect = false;
@@ -60,6 +70,31 @@ static inline bool m6809_decode_indexed(uint8_t post,
         mode->kind = M6809_IDX_OFFSET5;
         mode->offset = sextract32(post, 0, 5);
         return true;
+    }
+
+    /*
+     *   $8F ,W     $AF n,W     $CF ,W++    $EF ,--W
+     *   $90 [,W]   $B0 [n,W]   $D0 [,W++]  $F0 [,--W]
+     */
+    wptr = post & 0x9f;
+    if (has_6309 && (wptr == 0x8f || wptr == 0x90)) {
+        mode->indirect = wptr == 0x90;
+        switch (extract32(post, 5, 2)) {
+        case 0:
+            mode->kind = M6809_IDX_W;
+            return true;
+        case 1:
+            mode->kind = M6809_IDX_W_OFFSET16;
+            return true;
+        case 2:
+            mode->kind = M6809_IDX_W_POSTINC2;
+            return true;
+        case 3:
+            mode->kind = M6809_IDX_W_PREDEC2;
+            return true;
+        default:
+            g_assert_not_reached();
+        }
     }
 
     mode->indirect = post & 0x10;
@@ -92,11 +127,23 @@ static inline bool m6809_decode_indexed(uint8_t post,
     case 0x6:
         mode->kind = M6809_IDX_A;
         return true;
+    case 0x7:
+        if (!has_6309) {
+            return false;
+        }
+        mode->kind = M6809_IDX_E;
+        return true;
     case 0x8:
         mode->kind = M6809_IDX_OFFSET8;
         return true;
     case 0x9:
         mode->kind = M6809_IDX_OFFSET16;
+        return true;
+    case 0xa:
+        if (!has_6309) {
+            return false;
+        }
+        mode->kind = M6809_IDX_F;
         return true;
     case 0xb:
         mode->kind = M6809_IDX_D;
@@ -106,6 +153,12 @@ static inline bool m6809_decode_indexed(uint8_t post,
         return true;
     case 0xd:
         mode->kind = M6809_IDX_PCR16;
+        return true;
+    case 0xe:
+        if (!has_6309) {
+            return false;
+        }
+        mode->kind = M6809_IDX_W_OFF;
         return true;
     case 0xf:
         if (post != 0x9f) {
