@@ -221,6 +221,11 @@ static inline void m6809_set_q(CPUM6809State *env, uint32_t q)
     m6809_set_w(env, q & 0xffff);
 }
 
+static inline bool m6809_native_stack(CPUM6809State *env)
+{
+    return m6809_feature(env, M6809_FEATURE_6309) && (env->md & MD_NM);
+}
+
 static inline int m6809_cpu_pending_interrupt(CPUM6809State *env)
 {
     if ((env->intsrc & M6809_INT_NMI) && env->nmi_armed) {

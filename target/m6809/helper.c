@@ -103,10 +103,15 @@ static void m6809_push16(CPUM6809State *env, uint32_t val)
 }
 
 /*
- * Stack an interrupt frame on S. The full frame is PC, U, Y, X, DP, B, A, CC,
- * matching PSHS with a $FF postbyte; the short FIRQ frame is only PC and CC.
- * CC must already carry the E bit that says which of the two was used, since
- * that is what RTI reads back to size the frame.
+ * Stack an interrupt frame on S.
+ *
+ * Entire (6809 / 6309 emulation): PC, U, Y, X, DP, B, A, CC (12 bytes).
+ * Entire (6309 native):           PC, U, Y, X, DP, F, E, B, A, CC (14).
+ *   W sits between DP and D; push W as 16-bit so memory is E then F.
+ * Short FIRQ: PC, CC. MD.FM selects entire vs short for FIRQ only.
+ *
+ * CC must already carry the E bit that says which of the two was used,
+ * since that is what RTI reads back to size the frame.
  */
 static void m6809_stack_interrupt_frame(CPUM6809State *env, bool full_frame)
 {
@@ -116,6 +121,9 @@ static void m6809_stack_interrupt_frame(CPUM6809State *env, bool full_frame)
         m6809_push16(env, env->y);
         m6809_push16(env, env->x);
         m6809_push8(env, env->dp);
+        if (m6809_native_stack(env)) {
+            m6809_push16(env, m6809_get_w(env));
+        }
         m6809_push8(env, env->b);
         m6809_push8(env, env->a);
     }
@@ -138,7 +146,7 @@ void m6809_cpu_do_interrupt(CPUState *cs)
     case EXCP_FIRQ:
         vector = M6809_VEC_FIRQ;
         set_mask = CC_F | CC_I;
-        full_frame = false;
+        full_frame = env->md & MD_FM;
         break;
     case EXCP_IRQ:
         vector = M6809_VEC_IRQ;

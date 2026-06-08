@@ -226,6 +226,34 @@ static QTestState *isa_vm_cpu(const char *cpu)
                        cpu, rom_path);
 }
 
+static void hd6309_isa_run(const IsaCase *c)
+{
+    QTestState *saved = qts;
+    bool saved_ran = ran;
+
+    qts = isa_vm_cpu("hd6309");
+    ran = false;
+    isa_run_case(c);
+    qtest_quit(qts);
+    qts = saved;
+    ran = saved_ran;
+}
+
+static void hd6309_firq_run(const IsaCase *c)
+{
+    QTestState *saved = qts;
+    bool saved_ran = ran;
+
+    qts = qtest_initf(
+        "-M coco3,fake-cart-firq=on -cpu hd6309 -bios %s "
+        "-accel tcg,one-insn-per-tb=on -S", rom_path);
+    ran = false;
+    isa_run_case(c);
+    qtest_quit(qts);
+    qts = saved;
+    ran = saved_ran;
+}
+
 /* lda #$5a; tfr a,w — 6309 duplicates A into both halves of W. */
 static void test_hd6309_tfr_a_w(void)
 {
@@ -367,6 +395,290 @@ static void test_hd6309_illegal_trap(void)
     g_assert_nonnull(strstr(regs, "PC=8100"));
     g_assert_nonnull(strstr(regs, "MD=40"));
     g_assert_nonnull(strstr(regs, "S=3ff4"));
+    qtest_quit(s);
+}
+
+/* lds #$4000; swi — 6309 emulation still uses a 12-byte frame. */
+static void test_hd6309_swi_emu(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x3f,                   /* swi */
+    };
+    static const IsaVec vec[] = { { 0xfffa, 0x8100 } };
+    static const IsaLoad load[] = {
+        { 0x8100, 0x20 },       /* bra * */
+        { 0x8101, 0xfe },
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, load, ARRAY_SIZE(load), vec, ARRAY_SIZE(vec), false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8100", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8100"));
+    g_assert_nonnull(strstr(regs, "S=3ff4"));
+    g_assert_nonnull(strstr(regs, "NM=0"));
+    qtest_quit(s);
+}
+
+/*
+ * Native SWI: 14-byte frame PC,U,Y,X,DP,F,E,B,A,CC so memory is
+ * CC,A,B,E,F,DP,X,Y,U,PC.
+ */
+static void test_hd6309_swi_native(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x11, 0x3d, 0x01,       /* ldmd #$01 */
+        0x86, 0xaa,             /* lda #$aa */
+        0x1f, 0x8e,             /* tfr a,e */
+        0x86, 0xbb,             /* lda #$bb */
+        0x1f, 0x8f,             /* tfr a,f */
+        0x86, 0x12,             /* lda #$12 */
+        0x1f, 0x8b,             /* tfr a,dp */
+        0xc6, 0x34,             /* ldb #$34 */
+        0x8e, 0x11, 0x11,       /* ldx #$1111 */
+        0x10, 0x8e, 0x22, 0x22, /* ldy #$2222 */
+        0xce, 0x33, 0x33,       /* ldu #$3333 */
+        0x3f,                   /* swi at $801f; stacked PC = $8020 */
+    };
+    static const IsaLoad load[] = {
+        { 0x8100, 0x20 },       /* bra * */
+        { 0x8101, 0xfe },
+    };
+    static const IsaVec vec[] = { { 0xfffa, 0x8100 } };
+    static const uint8_t frame[] = {
+        0xd0, 0x12, 0x34, 0xaa, 0xbb, 0x12,
+        0x11, 0x11, 0x22, 0x22, 0x33, 0x33, 0x80, 0x20,
+    };
+    uint8_t got[sizeof(frame)];
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, load, ARRAY_SIZE(load), vec, ARRAY_SIZE(vec), false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8100", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8100"));
+    g_assert_nonnull(strstr(regs, "S=3ff2"));
+    g_assert_nonnull(strstr(regs, "E=aa"));
+    g_assert_nonnull(strstr(regs, "F=bb"));
+    g_assert_nonnull(strstr(regs, "MD=01"));
+    g_assert_nonnull(strstr(regs, "NM=1"));
+    qtest_memread(s, 0x3ff2, got, sizeof(got));
+    g_assert_cmpint(memcmp(got, frame, sizeof(frame)), ==, 0);
+    qtest_quit(s);
+}
+
+/* Native SWI then RTI restores W and S. */
+static void test_hd6309_swi_rti_native(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x11, 0x3d, 0x01,       /* ldmd #$01 */
+        0x86, 0xaa,             /* lda #$aa */
+        0x1f, 0x8e,             /* tfr a,e */
+        0x86, 0xbb,             /* lda #$bb */
+        0x1f, 0x8f,             /* tfr a,f */
+        0x86, 0x5a,             /* lda #$5a */
+        0x8e, 0x11, 0x11,       /* ldx #$1111 */
+        0x3f,                   /* swi */
+    };
+    static const uint8_t handler[] = {
+        0x4c, 0xb7, 0x20, 0x00, 0x3b, /* inca; sta $2000; rti */
+    };
+    const IsaCase c = {
+        .name = "hd6309_swi_rti_native",
+        .disas = "ldmd #$01; lda/tfr e,f; lda #$5a; ldx #$1111; swi",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){
+            "A=5a", "X=1111", "S=4000", "E=aa", "F=bb", "MD=01", NULL
+        },
+        .operand = handler,
+        .operand_len = sizeof(handler),
+        .vec = (const IsaVec[]){ { 0xfffa, ROM_BASE + OPERAND_OFFSET } },
+        .n_vec = 1,
+        .mem = (const IsaMem[]){ { 0x2000, (const uint8_t[]){ 0x5b }, 1 } },
+        .n_mem = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* Native CWAI + IRQ: 14-byte frame, then RTI + incb. */
+static void test_hd6309_cwai_irq_native(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00,             /* lds #$4000 */
+        0x11, 0x3d, 0x01,                   /* ldmd #$01 */
+        0x86, 0xaa, 0x1f, 0x8e,             /* lda #$aa; tfr a,e */
+        0x86, 0xbb, 0x1f, 0x8f,             /* lda #$bb; tfr a,f */
+        0x86, 0x20, 0xb7, 0xff, 0x90,       /* lda #$20; sta $ff90 */
+        0x86, 0x08, 0xb7, 0xff, 0x92,       /* lda #$08; sta $ff92 */
+        0x86, 0x12, 0x1f, 0x8b,             /* lda #$12; tfr a,dp */
+        0xcc, 0x12, 0x34,                   /* ldd #$1234 */
+        0x8e, 0x11, 0x11,                   /* ldx #$1111 */
+        0x10, 0x8e, 0x22, 0x22,             /* ldy #$2222 */
+        0xce, 0x33, 0x33,                   /* ldu #$3333 */
+        0x3c, 0xaf,                         /* cwai #$af */
+        0x5c,                               /* incb */
+    };
+    static const uint8_t handler[] = {
+        0x7f, 0xff, 0x92, 0xb6, 0xff, 0x92, 0x3b,
+    };
+    static const uint8_t frame[] = {
+        0x80, 0x12, 0x34, 0xaa, 0xbb, 0x12,
+        0x11, 0x11, 0x22, 0x22, 0x33, 0x33, 0x80, 0x2c,
+    };
+    const IsaCase c = {
+        .name = "hd6309_cwai_irq_native",
+        .disas = "ldmd #$01; set e/f; enable irq; cwai #$af; incb",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){
+            "A=12", "B=35", "DP=12", "X=1111", "Y=2222",
+            "U=3333", "S=4000", "E=aa", "F=bb", "CC=80", "MD=01", NULL
+        },
+        .operand = handler,
+        .operand_len = sizeof(handler),
+        .vec = (const IsaVec[]){ { 0xfff8, ROM_BASE + OPERAND_OFFSET } },
+        .n_vec = 1,
+        .mem = (const IsaMem[]){ { 0x3ff2, frame, sizeof(frame) } },
+        .n_mem = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* Native mode, MD.FM=0: FIRQ still stacks only PC, CC. */
+static void test_hd6309_firq_native_short(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00,             /* lds #$4000 */
+        0x11, 0x3d, 0x01,                   /* ldmd #$01 */
+        0x86, 0x05, 0xb7, 0xff, 0x23,       /* lda #$05; sta $ff23 */
+        0x86, 0x5a, 0x1c, 0xaf, 0x13,       /* lda #$5a; andcc #$af; sync */
+        0x4c,                               /* inca */
+    };
+    static const uint8_t handler[] = {
+        0x86, 0x04, 0xb7, 0xff, 0x23, 0xb6, 0xff, 0x22, 0x3b,
+    };
+    static const uint8_t frame[] = { 0x00, 0x80, 0x11 };
+    const IsaCase c = {
+        .name = "hd6309_firq_native_short",
+        .disas = "ldmd #$01; enable firq; lda #$5a; andcc #$af; sync; inca",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "A=01", "S=4000", "CC=00", "MD=01", NULL },
+        .operand = handler,
+        .operand_len = sizeof(handler),
+        .vec = (const IsaVec[]){ { 0xfff6, ROM_BASE + OPERAND_OFFSET } },
+        .n_vec = 1,
+        .mem = (const IsaMem[]){ { 0x3ffd, frame, sizeof(frame) } },
+        .n_mem = 1,
+    };
+
+    hd6309_firq_run(&c);
+}
+
+/* MD.FM=1, emulation: FIRQ uses the 12-byte entire frame. */
+static void test_hd6309_firq_fm_emu(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00,             /* lds #$4000 */
+        0x11, 0x3d, 0x02,                   /* ldmd #$02 */
+        0x86, 0x05, 0xb7, 0xff, 0x23,       /* lda #$05; sta $ff23 */
+        0x86, 0x5a, 0x1c, 0xaf, 0x13,       /* lda #$5a; andcc #$af; sync */
+        0x4c,                               /* inca */
+    };
+    static const uint8_t handler[] = {
+        0x86, 0x04, 0xb7, 0xff, 0x23, 0xb6, 0xff, 0x22, 0x3b,
+    };
+    static const uint8_t frame[] = {
+        0x80, 0x5a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x80, 0x11,
+    };
+    const IsaCase c = {
+        .name = "hd6309_firq_fm_emu",
+        .disas = "ldmd #$02; enable firq; lda #$5a; andcc #$af; sync; inca",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "A=5b", "S=4000", "CC=80", "MD=02", NULL },
+        .operand = handler,
+        .operand_len = sizeof(handler),
+        .vec = (const IsaVec[]){ { 0xfff6, ROM_BASE + OPERAND_OFFSET } },
+        .n_vec = 1,
+        .mem = (const IsaMem[]){ { 0x3ff4, frame, sizeof(frame) } },
+        .n_mem = 1,
+    };
+
+    hd6309_firq_run(&c);
+}
+
+/* Native + MD.FM=1: FIRQ uses the 14-byte entire frame. */
+static void test_hd6309_firq_fm_native(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00,             /* lds #$4000 */
+        0x11, 0x3d, 0x03,                   /* ldmd #$03 */
+        0x86, 0xaa, 0x1f, 0x8e,             /* lda #$aa; tfr a,e */
+        0x86, 0xbb, 0x1f, 0x8f,             /* lda #$bb; tfr a,f */
+        0x86, 0x05, 0xb7, 0xff, 0x23,       /* lda #$05; sta $ff23 */
+        0x86, 0x5a, 0x1c, 0xaf, 0x13,       /* lda #$5a; andcc #$af; sync */
+        0x4c,                               /* inca */
+    };
+    static const uint8_t handler[] = {
+        0x86, 0x04, 0xb7, 0xff, 0x23, 0xb6, 0xff, 0x22, 0x3b,
+    };
+    static const uint8_t frame[] = {
+        0x80, 0x5a, 0x00, 0xaa, 0xbb, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x19,
+    };
+    const IsaCase c = {
+        .name = "hd6309_firq_fm_native",
+        .disas = "ldmd #$03; set e/f; enable firq; sync; inca",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){
+            "A=5b", "S=4000", "E=aa", "F=bb", "CC=80", "MD=03", NULL
+        },
+        .operand = handler,
+        .operand_len = sizeof(handler),
+        .vec = (const IsaVec[]){ { 0xfff6, ROM_BASE + OPERAND_OFFSET } },
+        .n_vec = 1,
+        .mem = (const IsaMem[]){ { 0x3ff2, frame, sizeof(frame) } },
+        .n_mem = 1,
+    };
+
+    hd6309_firq_run(&c);
+}
+
+/* $113D is LDMD on a 6309; a 6809 must still halt. */
+static void test_m6809_ldmd_halts(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x11, 0x3d, 0x01,       /* ldmd #$01 (illegal on 6809) */
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("m6809");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8004", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8004"));
+    g_assert_nonnull(strstr(regs, "S=4000"));
     qtest_quit(s);
 }
 
@@ -535,6 +847,14 @@ int main(int argc, char **argv)
     qtest_add_func("/isa/hd6309_index_e_x", test_hd6309_index_e_x);
     qtest_add_func("/isa/hd6309_index_w", test_hd6309_index_w);
     qtest_add_func("/isa/hd6309_illegal_trap", test_hd6309_illegal_trap);
+    qtest_add_func("/isa/hd6309_swi_emu", test_hd6309_swi_emu);
+    qtest_add_func("/isa/hd6309_swi_native", test_hd6309_swi_native);
+    qtest_add_func("/isa/hd6309_swi_rti_native", test_hd6309_swi_rti_native);
+    qtest_add_func("/isa/hd6309_cwai_irq_native", test_hd6309_cwai_irq_native);
+    qtest_add_func("/isa/hd6309_firq_native_short", test_hd6309_firq_native_short);
+    qtest_add_func("/isa/hd6309_firq_fm_emu", test_hd6309_firq_fm_emu);
+    qtest_add_func("/isa/hd6309_firq_fm_native", test_hd6309_firq_fm_native);
+    qtest_add_func("/isa/m6809_ldmd_halts", test_m6809_ldmd_halts);
     qtest_add_func("/isa/cwai_irq", test_cwai_irq);
     qtest_add_func("/isa/firq_short_frame", test_firq_short_frame);
     qtest_add_func("/isa/sync_masked_falls_through", test_sync_masked);

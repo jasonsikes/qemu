@@ -41,6 +41,7 @@
 @op_rel16           ........ disp:s16                       &rel16
 
 # Page $10 / $11 formats (16-bit opcode, then the operand)
+@op10_imm8          ................ imm:8                  &imm8
 @op10_imm16         ................ imm:16                 &imm16
 @op10_dir           ................ addr:8                 &addr8
 @op10_ext           ................ addr:16                &addr16
@@ -387,3 +388,8 @@ JMP_ext             0111 1110 .... .... .... ....           @op_ext
 #
 CWAI                0011 1100 .... ....                     @op_imm8
 SYNC                0001 0011
+
+#
+# 6309 LDMD.
+#
+LDMD                0001 0001 0011 1101 .... ....           @op10_imm8

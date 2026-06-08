@@ -276,6 +276,7 @@ INSN(RTI,      "rti",  "")
 INSN(SWI,      "swi",  "")
 INSN(SWI2,     "swi2", "")
 INSN(SWI3,     "swi3", "")
+INSN(LDMD,     "ldmd", "#$%02x", a->imm)
 
 static bool trans_BSR(DisasContext *ctx, arg_BSR *a)
 {

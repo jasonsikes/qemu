@@ -790,6 +790,43 @@ static void gen_pul(DisasContext *ctx, TCGv_i32 sp, int mask, bool pulu)
     }
 }
 
+/*
+ * Entire interrupt / SWI / CWAI frame. Native extra bytes are only here,
+ * not in PSHS/PULS: PC, U, Y, X, DP, [F, E], B, A, CC.
+ */
+static void gen_stack_entire(DisasContext *ctx)
+{
+    gen_push16(cpu_s, tcg_constant_i32(ctx->base.pc_next & 0xffff));
+    gen_push16(cpu_s, cpu_u);
+    gen_push16(cpu_s, cpu_y);
+    gen_push16(cpu_s, cpu_x);
+    gen_push8(cpu_s, cpu_dp);
+    if (ctx->native) {
+        TCGv_i32 w = tcg_temp_new_i32();
+
+        gen_get_w(w);
+        gen_push16(cpu_s, w);
+    }
+    gen_push8(cpu_s, cpu_b);
+    gen_push8(cpu_s, cpu_a);
+    gen_push8(cpu_s, cpu_cc);
+}
+
+static void gen_unstack_entire(DisasContext *ctx)
+{
+    gen_pull8(cpu_s, cpu_a);
+    gen_pull8(cpu_s, cpu_b);
+    if (ctx->native) {
+        gen_pull8(cpu_s, cpu_e);
+        gen_pull8(cpu_s, cpu_f);
+    }
+    gen_pull8(cpu_s, cpu_dp);
+    gen_pull16(cpu_s, cpu_x);
+    gen_pull16(cpu_s, cpu_y);
+    gen_pull16(cpu_s, cpu_u);
+    gen_pull16(cpu_s, cpu_pc);
+}
+
 static bool gen_ea_indexed(DisasContext *ctx, TCGv_i32 *result)
 {
     M6809IndexedMode mode;
@@ -1598,12 +1635,13 @@ static bool trans_RTS(DisasContext *ctx, arg_RTS *a)
 /*
  * SWI/SWI2/SWI3 set E, push the entire machine state, then fetch the
  * service vector. Only SWI sets I and F, and it does so after stacking
- * so the saved CC preserves the previous mask bits.
+ * so the saved CC preserves the previous mask bits. Native mode adds W
+ * (E:F) between DP and D; PSHS/PULS postbytes are unchanged.
  */
 static bool do_swi(DisasContext *ctx, uint32_t vector, bool mask_if)
 {
     tcg_gen_ori_i32(cpu_cc, cpu_cc, CC_E);
-    gen_psh(ctx, cpu_s, 0xff, false);
+    gen_stack_entire(ctx);
     if (mask_if) {
         tcg_gen_ori_i32(cpu_cc, cpu_cc, CC_I | CC_F);
     }
@@ -1642,7 +1680,7 @@ static bool trans_RTI(DisasContext *ctx, arg_RTI *a)
 
     gen_set_label(entire);
     /* CC was already pulled; restore the rest of the entire state. */
-    gen_pul(ctx, cpu_s, 0xfe, false);
+    gen_unstack_entire(ctx);
 
     gen_set_label(done);
     /* The restored CC may have cleared I or F, so re-test interrupts. */
@@ -2355,6 +2393,23 @@ static bool trans_CWAI(DisasContext *ctx, arg_CWAI *a)
     tcg_gen_movi_i32(cpu_pc, ctx->base.pc_next & 0xffff);
     gen_helper_cwai(tcg_env, tcg_constant_i32(a->imm & 0xff));
     ctx->base.is_jmp = DISAS_NORETURN;
+    return true;
+}
+
+static bool trans_LDMD(DisasContext *ctx, arg_LDMD *a)
+{
+    uint32_t imm = a->imm & (MD_NM | MD_FM);
+
+    if (!m6809_feature(ctx->env, M6809_FEATURE_6309)) {
+        gen_illegal(ctx);
+        return true;
+    }
+
+    /* NM and FM only; sticky IL/DZ are unchanged. */
+    tcg_gen_andi_i32(cpu_md, cpu_md, ~(MD_NM | MD_FM) & 0xff);
+    tcg_gen_ori_i32(cpu_md, cpu_md, imm);
+    /* NM is a TB flag; leave the block even if this LDMD does not toggle it. */
+    ctx->base.is_jmp = DISAS_UPDATE_EXIT;
     return true;
 }
 
