@@ -369,12 +369,12 @@ static void test_hd6309_index_w(void)
     qtest_quit(s);
 }
 
-/* lds #$4000; $01 (illegal) — trap to $FFF0, MD.IL set, 12-byte frame. */
+/* lds #$4000; $15 (illegal) — trap to $FFF0, MD.IL set, 12-byte frame. */
 static void test_hd6309_illegal_trap(void)
 {
     static const uint8_t code[] = {
         0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
-        0x01,                   /* illegal */
+        0x15,                   /* still illegal on 6309 */
     };
     static const IsaLoad load[] = {
         { 0x8100, 0x20 },       /* bra * */
@@ -660,6 +660,250 @@ static void test_hd6309_firq_fm_native(void)
     hd6309_firq_run(&c);
 }
 
+static void test_hd6309_ldmd_bitmd(void)
+{
+    static const uint8_t code[] = {
+        0x11, 0x3d, 0x01,       /* ldmd #$01 */
+        0x11, 0x3c, 0xc0,       /* bitmd #$c0 — IL/DZ clear, so Z */
+    };
+    const IsaCase c = {
+        .name = "hd6309_ldmd_bitmd",
+        .disas = "ldmd #$01; bitmd #$c0",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "MD=01", "NM=1", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_aim(void)
+{
+    static const uint8_t code[] = {
+        0x02, 0x0f, 0x20,       /* aim #$0f,<$20 */
+    };
+    static const uint8_t mem[] = { 0x0f };
+    const IsaCase c = {
+        .name = "hd6309_aim",
+        .disas = "aim #$0f,<$20",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ NULL },
+        .load = (const IsaLoad[]){ { 0x0020, 0xff } },
+        .n_load = 1,
+        .mem = (const IsaMem[]){ { 0x0020, mem, 1 } },
+        .n_mem = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_ldq(void)
+{
+    static const uint8_t code[] = {
+        0xcd, 0x11, 0x22, 0x33, 0x44, /* ldq #$11223344 */
+    };
+    const IsaCase c = {
+        .name = "hd6309_ldq",
+        .disas = "ldq #$11223344",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){
+            "D=1122", "W=3344", "E=33", "F=44", NULL
+        },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_sexw(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x86, 0x80, 0x00, /* ldw #$8000 */
+        0x14,                   /* sexw */
+    };
+    const IsaCase c = {
+        .name = "hd6309_sexw",
+        .disas = "ldw #$8000; sexw",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "D=ffff", "W=8000", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_clrd(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x12, 0x34,       /* ldd #$1234 */
+        0x10, 0x4f,             /* clrd */
+    };
+    const IsaCase c = {
+        .name = "hd6309_clrd",
+        .disas = "ldd #$1234; clrd",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "D=0000", "A=00", "B=00", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_addr(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x00, 0x01,       /* ldd #$0001 */
+        0x8e, 0x00, 0x02,       /* ldx #$0002 */
+        0x10, 0x30, 0x01,       /* addr d,x */
+    };
+    const IsaCase c = {
+        .name = "hd6309_addr",
+        .disas = "ldd #$0001; ldx #$0002; addr d,x",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "X=0003", "D=0001", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_muld_divd(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x00, 0x03,       /* ldd #$0003 */
+        0x11, 0x8f, 0x00, 0x04, /* muld #$0004  Q=12 */
+        0xcc, 0x00, 0x0a,       /* ldd #$000a */
+        0x11, 0x8d, 0x02,       /* divd #$02    B=5 A=0 */
+    };
+    const IsaCase c = {
+        .name = "hd6309_muld_divd",
+        .disas = "ldd #3; muld #4; ldd #10; divd #2",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "A=00", "B=05", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_pshsw(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x10, 0x86, 0xaa, 0xbb, /* ldw #$aabb */
+        0x10, 0x38,             /* pshsw */
+    };
+    static const uint8_t frame[] = { 0xaa, 0xbb };
+    const IsaCase c = {
+        .name = "hd6309_pshsw",
+        .disas = "lds #$4000; ldw #$aabb; pshsw",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "S=3ffe", "W=aabb", NULL },
+        .mem = (const IsaMem[]){ { 0x3ffe, frame, sizeof(frame) } },
+        .n_mem = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_tfm(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x86, 0x00, 0x02, /* ldw #$0002 */
+        0x8e, 0x20, 0x00,       /* ldx #$2000 */
+        0x10, 0x8e, 0x20, 0x10, /* ldy #$2010 */
+        0x11, 0x38, 0x12,       /* tfm x+,y+ */
+    };
+    static const uint8_t dest[] = { 0x11, 0x22 };
+    const IsaCase c = {
+        .name = "hd6309_tfm",
+        .disas = "ldw #2; ldx #$2000; ldy #$2010; tfm x+,y+",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){
+            "W=0000", "X=2002", "Y=2012", NULL
+        },
+        .load = (const IsaLoad[]){
+            { 0x2000, 0x11 }, { 0x2001, 0x22 }
+        },
+        .n_load = 2,
+        .mem = (const IsaMem[]){ { 0x2010, dest, sizeof(dest) } },
+        .n_mem = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_band(void)
+{
+    /* BAND A,5,1,$40 — A bit1 AND mem$40 bit5. A=$0F, mem=$C6 -> A=$0D */
+    static const uint8_t code[] = {
+        0x86, 0x0f,             /* lda #$0f */
+        0x11, 0x30, 0x69, 0x40, /* band a,5,1,$40 */
+    };
+    const IsaCase c = {
+        .name = "hd6309_band",
+        .disas = "lda #$0f; band a,5,1,$40",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "A=0d", NULL },
+        .load = (const IsaLoad[]){ { 0x0040, 0xc6 } },
+        .n_load = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_div0(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0xcc, 0x00, 0x0a,       /* ldd #$000a */
+        0x11, 0x8d, 0x00,       /* divd #0 */
+    };
+    static const IsaLoad load[] = {
+        { 0x8100, 0x20 },
+        { 0x8101, 0xfe },
+    };
+    static const IsaVec vec[] = {
+        { 0xffee, 0x8100 },
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, load, ARRAY_SIZE(load), vec, ARRAY_SIZE(vec), false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8100", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8100"));
+    g_assert_nonnull(strstr(regs, "MD=80"));
+    qtest_quit(s);
+}
+
+/* $14 is SEXW on a 6309; a 6809 must still halt. */
+static void test_m6809_sexw_halts(void)
+{
+    static const uint8_t code[] = {
+        0x14,
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("m6809");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8000", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8000"));
+    qtest_quit(s);
+}
+
 /* $113D is LDMD on a 6309; a 6809 must still halt. */
 static void test_m6809_ldmd_halts(void)
 {
@@ -854,6 +1098,18 @@ int main(int argc, char **argv)
     qtest_add_func("/isa/hd6309_firq_native_short", test_hd6309_firq_native_short);
     qtest_add_func("/isa/hd6309_firq_fm_emu", test_hd6309_firq_fm_emu);
     qtest_add_func("/isa/hd6309_firq_fm_native", test_hd6309_firq_fm_native);
+    qtest_add_func("/isa/hd6309_ldmd_bitmd", test_hd6309_ldmd_bitmd);
+    qtest_add_func("/isa/hd6309_aim", test_hd6309_aim);
+    qtest_add_func("/isa/hd6309_ldq", test_hd6309_ldq);
+    qtest_add_func("/isa/hd6309_sexw", test_hd6309_sexw);
+    qtest_add_func("/isa/hd6309_clrd", test_hd6309_clrd);
+    qtest_add_func("/isa/hd6309_addr", test_hd6309_addr);
+    qtest_add_func("/isa/hd6309_muld_divd", test_hd6309_muld_divd);
+    qtest_add_func("/isa/hd6309_pshsw", test_hd6309_pshsw);
+    qtest_add_func("/isa/hd6309_tfm", test_hd6309_tfm);
+    qtest_add_func("/isa/hd6309_band", test_hd6309_band);
+    qtest_add_func("/isa/hd6309_div0", test_hd6309_div0);
+    qtest_add_func("/isa/m6809_sexw_halts", test_m6809_sexw_halts);
     qtest_add_func("/isa/m6809_ldmd_halts", test_m6809_ldmd_halts);
     qtest_add_func("/isa/cwai_irq", test_cwai_irq);
     qtest_add_func("/isa/firq_short_frame", test_firq_short_frame);

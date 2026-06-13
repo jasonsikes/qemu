@@ -156,6 +156,20 @@ static void gen_set_nz8(TCGv_i32 r)
     tcg_gen_or_i32(cpu_cc, cpu_cc, t);
 }
 
+static void gen_set_nz16(TCGv_i32 r)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_setcondi_i32(TCG_COND_EQ, t, r, 0);
+    tcg_gen_shli_i32(t, t, 2);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+
+    tcg_gen_shri_i32(t, r, 15);
+    tcg_gen_andi_i32(t, t, 1);
+    tcg_gen_shli_i32(t, t, 3);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+}
+
 static void gen_logic_cc8(TCGv_i32 r)
 {
     tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V));
@@ -228,7 +242,7 @@ static void gen_add8_common(TCGv_i32 dest, TCGv_i32 src, bool with_carry)
     tcg_gen_mov_i32(dest, r);
 }
 
-static void gen_add16(TCGv_i32 dest, TCGv_i32 src)
+static void gen_add16_common(TCGv_i32 dest, TCGv_i32 src, bool with_carry)
 {
     TCGv_i32 a = tcg_temp_new_i32();
     TCGv_i32 b = tcg_temp_new_i32();
@@ -239,6 +253,10 @@ static void gen_add16(TCGv_i32 dest, TCGv_i32 src)
     tcg_gen_andi_i32(a, dest, 0xffff);
     tcg_gen_andi_i32(b, src, 0xffff);
     tcg_gen_add_i32(r, a, b);
+    if (with_carry) {
+        tcg_gen_andi_i32(t, cpu_cc, CC_C);
+        tcg_gen_add_i32(r, r, t);
+    }
 
     tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
 
@@ -264,6 +282,11 @@ static void gen_add16(TCGv_i32 dest, TCGv_i32 src)
     tcg_gen_or_i32(cpu_cc, cpu_cc, t);
 
     tcg_gen_mov_i32(dest, r);
+}
+
+static void gen_add16(TCGv_i32 dest, TCGv_i32 src)
+{
+    gen_add16_common(dest, src, false);
 }
 
 static void gen_sub8_common(TCGv_i32 dest, TCGv_i32 src,
@@ -325,7 +348,8 @@ static void gen_cmp8(TCGv_i32 dest, TCGv_i32 src)
     gen_sub8_common(dest, src, false, false);
 }
 
-static void gen_sub16(TCGv_i32 dest, TCGv_i32 src, bool writeback)
+static void gen_sub16_common(TCGv_i32 dest, TCGv_i32 src,
+                             bool with_carry, bool writeback)
 {
     TCGv_i32 a = tcg_temp_new_i32();
     TCGv_i32 b = tcg_temp_new_i32();
@@ -335,6 +359,10 @@ static void gen_sub16(TCGv_i32 dest, TCGv_i32 src, bool writeback)
     tcg_gen_andi_i32(a, dest, 0xffff);
     tcg_gen_andi_i32(b, src, 0xffff);
     tcg_gen_sub_i32(r, a, b);
+    if (with_carry) {
+        tcg_gen_andi_i32(t, cpu_cc, CC_C);
+        tcg_gen_sub_i32(r, r, t);
+    }
 
     tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
 
@@ -362,6 +390,11 @@ static void gen_sub16(TCGv_i32 dest, TCGv_i32 src, bool writeback)
     if (writeback) {
         tcg_gen_mov_i32(dest, r);
     }
+}
+
+static void gen_sub16(TCGv_i32 dest, TCGv_i32 src, bool writeback)
+{
+    gen_sub16_common(dest, src, false, writeback);
 }
 
 static void gen_cmp16(TCGv_i32 dest, TCGv_i32 src)
@@ -565,6 +598,215 @@ static void gen_clr8(TCGv_i32 val)
     tcg_gen_ori_i32(cpu_cc, cpu_cc, CC_Z);
 }
 
+static void gen_neg16(TCGv_i32 val)
+{
+    TCGv_i32 src = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(src, val, 0xffff);
+    tcg_gen_neg_i32(val, src);
+    tcg_gen_andi_i32(val, val, 0xffff);
+
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
+    tcg_gen_setcondi_i32(TCG_COND_NE, t, src, 0);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_setcondi_i32(TCG_COND_EQ, t, src, 0x8000);
+    tcg_gen_shli_i32(t, t, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    gen_set_nz16(val);
+}
+
+static void gen_com16(TCGv_i32 val)
+{
+    tcg_gen_not_i32(val, val);
+    tcg_gen_andi_i32(val, val, 0xffff);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
+    tcg_gen_ori_i32(cpu_cc, cpu_cc, CC_C);
+    gen_set_nz16(val);
+}
+
+static void gen_lsr16(TCGv_i32 val)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(val, val, 0xffff);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_C));
+    tcg_gen_andi_i32(t, val, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_shri_i32(val, val, 1);
+    gen_set_nz16(val);
+}
+
+static void gen_asr16(TCGv_i32 val)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(val, val, 0xffff);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_C));
+    tcg_gen_andi_i32(t, val, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_ext16s_i32(val, val);
+    tcg_gen_sari_i32(val, val, 1);
+    tcg_gen_andi_i32(val, val, 0xffff);
+    gen_set_nz16(val);
+}
+
+static void gen_shift_v16(TCGv_i32 src)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+    TCGv_i32 u = tcg_temp_new_i32();
+
+    tcg_gen_shri_i32(t, src, 14);
+    tcg_gen_shri_i32(u, src, 15);
+    tcg_gen_xor_i32(t, t, u);
+    tcg_gen_andi_i32(t, t, 1);
+    tcg_gen_shli_i32(t, t, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+}
+
+static void gen_asl16(TCGv_i32 val)
+{
+    TCGv_i32 src = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(src, val, 0xffff);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
+    tcg_gen_shri_i32(t, src, 15);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    gen_shift_v16(src);
+    tcg_gen_shli_i32(val, src, 1);
+    tcg_gen_andi_i32(val, val, 0xffff);
+    gen_set_nz16(val);
+}
+
+static void gen_rol16(TCGv_i32 val)
+{
+    TCGv_i32 src = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(src, val, 0xffff);
+    tcg_gen_andi_i32(t, cpu_cc, CC_C);
+    tcg_gen_shli_i32(val, src, 1);
+    tcg_gen_or_i32(val, val, t);
+    tcg_gen_andi_i32(val, val, 0xffff);
+
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
+    tcg_gen_shri_i32(t, src, 15);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    gen_shift_v16(src);
+    gen_set_nz16(val);
+}
+
+static void gen_ror16(TCGv_i32 val)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+    TCGv_i32 c = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(val, val, 0xffff);
+    tcg_gen_andi_i32(c, cpu_cc, CC_C);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_C));
+    tcg_gen_andi_i32(t, val, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_shri_i32(val, val, 1);
+    tcg_gen_shli_i32(c, c, 15);
+    tcg_gen_or_i32(val, val, c);
+    gen_set_nz16(val);
+}
+
+static void gen_dec16(TCGv_i32 val)
+{
+    TCGv_i32 src = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(src, val, 0xffff);
+    tcg_gen_subi_i32(val, src, 1);
+    tcg_gen_andi_i32(val, val, 0xffff);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V));
+    tcg_gen_setcondi_i32(TCG_COND_EQ, t, src, 0x8000);
+    tcg_gen_shli_i32(t, t, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    gen_set_nz16(val);
+}
+
+static void gen_inc16(TCGv_i32 val)
+{
+    TCGv_i32 src = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(src, val, 0xffff);
+    tcg_gen_addi_i32(val, src, 1);
+    tcg_gen_andi_i32(val, val, 0xffff);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V));
+    tcg_gen_setcondi_i32(TCG_COND_EQ, t, src, 0x7fff);
+    tcg_gen_shli_i32(t, t, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    gen_set_nz16(val);
+}
+
+static void gen_clr16(TCGv_i32 val)
+{
+    tcg_gen_movi_i32(val, 0);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
+    tcg_gen_ori_i32(cpu_cc, cpu_cc, CC_Z);
+}
+
+static void gen_logic16(TCGv_i32 dest, TCGv_i32 src, M6809LogicOp op,
+                        bool writeback)
+{
+    TCGv_i32 r = tcg_temp_new_i32();
+
+    switch (op) {
+    case M6809_LOGIC_AND:
+        tcg_gen_and_i32(r, dest, src);
+        break;
+    case M6809_LOGIC_OR:
+        tcg_gen_or_i32(r, dest, src);
+        break;
+    case M6809_LOGIC_EOR:
+        tcg_gen_xor_i32(r, dest, src);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+    tcg_gen_andi_i32(r, r, 0xffff);
+    gen_logic_cc16(r);
+    if (writeback) {
+        tcg_gen_mov_i32(dest, r);
+    }
+}
+
+static void gen_add8_noh(TCGv_i32 dest, TCGv_i32 src, bool with_carry)
+{
+    TCGv_i32 a = tcg_temp_new_i32();
+    TCGv_i32 b = tcg_temp_new_i32();
+    TCGv_i32 r = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+    TCGv_i32 u = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(a, dest, 0xff);
+    tcg_gen_andi_i32(b, src, 0xff);
+    tcg_gen_add_i32(r, a, b);
+    if (with_carry) {
+        tcg_gen_andi_i32(t, cpu_cc, CC_C);
+        tcg_gen_add_i32(r, r, t);
+    }
+
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V | CC_C));
+    tcg_gen_setcondi_i32(TCG_COND_GTU, t, r, 0xff);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_andi_i32(r, r, 0xff);
+    gen_set_nz8(r);
+
+    tcg_gen_xor_i32(t, a, r);
+    tcg_gen_xor_i32(u, b, r);
+    tcg_gen_and_i32(t, t, u);
+    tcg_gen_andi_i32(t, t, 0x80);
+    tcg_gen_setcondi_i32(TCG_COND_NE, t, t, 0);
+    tcg_gen_shli_i32(t, t, 1);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_mov_i32(dest, r);
+}
+
 static TCGv_i32 gen_ea_direct(int addr)
 {
     TCGv_i32 ea = tcg_temp_new_i32();
@@ -594,6 +836,15 @@ static void gen_illegal(DisasContext *ctx)
     }
     gen_helper_raise_illegal_instruction(tcg_env);
     ctx->base.is_jmp = DISAS_NORETURN;
+}
+
+static bool require_6309(DisasContext *ctx)
+{
+    if (!m6809_feature(ctx->env, M6809_FEATURE_6309)) {
+        gen_illegal(ctx);
+        return false;
+    }
+    return true;
 }
 
 /* Unmasking I/F: exit the TB. */
@@ -2396,6 +2647,1049 @@ static bool trans_CWAI(DisasContext *ctx, arg_CWAI *a)
     return true;
 }
 
+static bool trans_INH14(DisasContext *ctx, arg_INH14 *a)
+{
+    TCGv_i32 w;
+    TCGv_i32 d;
+    TCGv_i32 t;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+
+    /* SEXW: copy W's sign into D. N from W bit 15; Z if Q is 0; V/C unchanged. */
+    w = tcg_temp_new_i32();
+    d = tcg_temp_new_i32();
+    t = tcg_temp_new_i32();
+    gen_get_w(w);
+    tcg_gen_ext16s_i32(d, w);
+    tcg_gen_sari_i32(d, d, 15);
+    tcg_gen_andi_i32(d, d, 0xffff);
+    gen_set_d(d);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z));
+    tcg_gen_setcondi_i32(TCG_COND_EQ, t, w, 0);
+    tcg_gen_shli_i32(t, t, 2);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_shri_i32(t, w, 15);
+    tcg_gen_andi_i32(t, t, 1);
+    tcg_gen_shli_i32(t, t, 3);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    return true;
+}
+
+static bool do_im_mem(DisasContext *ctx, TCGv_i32 ea, int imm,
+                      M6809LogicOp op, bool writeback)
+{
+    TCGv_i32 val = tcg_temp_new_i32();
+
+    tcg_gen_qemu_ld_i32(val, ea, 0, MO_UB);
+    gen_logic8(val, tcg_constant_i32(imm & 0xff), op, true);
+    if (writeback) {
+        tcg_gen_qemu_st_i32(val, ea, 0, MO_UB);
+    }
+    return true;
+}
+
+#define TRANS_IM_MEM(name, op, writeback)                               \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_im_mem(ctx, gen_ea_direct(a->addr), a->imm, op, writeback); \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    TCGv_i32 ea;                                                        \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    if (gen_ea_indexed(ctx, &ea)) {                                     \
+        do_im_mem(ctx, ea, a->imm, op, writeback);                      \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_im_mem(ctx, tcg_constant_i32(a->addr & 0xffff),           \
+                     a->imm, op, writeback);                            \
+}
+
+TRANS_IM_MEM(AIM, M6809_LOGIC_AND, true)
+TRANS_IM_MEM(OIM, M6809_LOGIC_OR, true)
+TRANS_IM_MEM(EIM, M6809_LOGIC_EOR, true)
+TRANS_IM_MEM(TIM, M6809_LOGIC_AND, false)
+
+#define TRANS_6309_LD8(name, dest)                                      \
+static bool trans_##name##_imm(DisasContext *ctx, arg_##name##_imm *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    tcg_gen_movi_i32(dest, a->imm & 0xff);                              \
+    gen_logic_cc8(dest);                                                \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    gen_ld8(dest, gen_ea_direct(a->addr));                              \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    TCGv_i32 ea;                                                        \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    if (gen_ea_indexed(ctx, &ea)) {                                     \
+        gen_ld8(dest, ea);                                              \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    gen_ld8(dest, tcg_constant_i32(a->addr & 0xffff));                  \
+    return true;                                                        \
+}
+
+#define TRANS_6309_ST8(name, src)                                       \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_st8_dir(src, a->addr);                                    \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_st8_idx(ctx, src);                                        \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_st8_ext(src, a->addr);                                    \
+}
+
+TRANS_6309_LD8(LDE, cpu_e)
+TRANS_6309_ST8(STE, cpu_e)
+TRANS_6309_LD8(LDF, cpu_f)
+TRANS_6309_ST8(STF, cpu_f)
+
+static bool trans_LDW_imm(DisasContext *ctx, arg_LDW_imm *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    tcg_gen_movi_i32(w, a->imm & 0xffff);
+    gen_logic_cc16(w);
+    gen_set_w(w);
+    return true;
+}
+
+static bool trans_LDW_dir(DisasContext *ctx, arg_LDW_dir *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    gen_ld16(w, gen_ea_direct(a->addr));
+    gen_set_w(w);
+    return true;
+}
+
+static bool trans_LDW_idx(DisasContext *ctx, arg_LDW_idx *a)
+{
+    TCGv_i32 ea;
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    if (gen_ea_indexed(ctx, &ea)) {
+        w = tcg_temp_new_i32();
+        gen_ld16(w, ea);
+        gen_set_w(w);
+    }
+    return true;
+}
+
+static bool trans_LDW_ext(DisasContext *ctx, arg_LDW_ext *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    gen_ld16(w, tcg_constant_i32(a->addr & 0xffff));
+    gen_set_w(w);
+    return true;
+}
+
+static bool do_stw(DisasContext *ctx, TCGv_i32 ea)
+{
+    TCGv_i32 w = tcg_temp_new_i32();
+
+    gen_get_w(w);
+    gen_st16(ea, w);
+    return true;
+}
+
+static bool trans_STW_dir(DisasContext *ctx, arg_STW_dir *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_stw(ctx, gen_ea_direct(a->addr));
+}
+
+static bool trans_STW_idx(DisasContext *ctx, arg_STW_idx *a)
+{
+    TCGv_i32 ea;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    if (gen_ea_indexed(ctx, &ea)) {
+        do_stw(ctx, ea);
+    }
+    return true;
+}
+
+static bool trans_STW_ext(DisasContext *ctx, arg_STW_ext *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_stw(ctx, tcg_constant_i32(a->addr & 0xffff));
+}
+
+static void gen_logic_cc32(TCGv_i32 hi, TCGv_i32 lo)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z | CC_V));
+    tcg_gen_or_i32(t, hi, lo);
+    tcg_gen_setcondi_i32(TCG_COND_EQ, t, t, 0);
+    tcg_gen_shli_i32(t, t, 2);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    tcg_gen_shri_i32(t, hi, 15);
+    tcg_gen_andi_i32(t, t, 1);
+    tcg_gen_shli_i32(t, t, 3);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+}
+
+static void gen_ld32(TCGv_i32 hi, TCGv_i32 lo, TCGv_i32 ea)
+{
+    TCGv_i32 ea2 = tcg_temp_new_i32();
+
+    gen_ld16_wrapped(hi, ea);
+    tcg_gen_addi_i32(ea2, ea, 2);
+    tcg_gen_andi_i32(ea2, ea2, 0xffff);
+    gen_ld16_wrapped(lo, ea2);
+    gen_logic_cc32(hi, lo);
+}
+
+static void gen_st32(TCGv_i32 ea, TCGv_i32 hi, TCGv_i32 lo)
+{
+    TCGv_i32 ea2 = tcg_temp_new_i32();
+
+    gen_st16_wrapped(ea, hi);
+    tcg_gen_addi_i32(ea2, ea, 2);
+    tcg_gen_andi_i32(ea2, ea2, 0xffff);
+    gen_st16_wrapped(ea2, lo);
+    gen_logic_cc32(hi, lo);
+}
+
+static bool trans_LDQ_imm(DisasContext *ctx, arg_LDQ_imm *a)
+{
+    uint32_t imm;
+    TCGv_i32 d;
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    imm = ((uint32_t)indexed_fetch16(ctx) << 16) | indexed_fetch16(ctx);
+    d = tcg_constant_i32(imm >> 16);
+    w = tcg_constant_i32(imm & 0xffff);
+    gen_set_d(d);
+    gen_set_w(w);
+    gen_logic_cc32(d, w);
+    return true;
+}
+
+static bool do_ldq(DisasContext *ctx, TCGv_i32 ea)
+{
+    TCGv_i32 d = tcg_temp_new_i32();
+    TCGv_i32 w = tcg_temp_new_i32();
+
+    gen_ld32(d, w, ea);
+    gen_set_d(d);
+    gen_set_w(w);
+    return true;
+}
+
+static bool trans_LDQ_dir(DisasContext *ctx, arg_LDQ_dir *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_ldq(ctx, gen_ea_direct(a->addr));
+}
+
+static bool trans_LDQ_idx(DisasContext *ctx, arg_LDQ_idx *a)
+{
+    TCGv_i32 ea;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    if (gen_ea_indexed(ctx, &ea)) {
+        do_ldq(ctx, ea);
+    }
+    return true;
+}
+
+static bool trans_LDQ_ext(DisasContext *ctx, arg_LDQ_ext *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_ldq(ctx, tcg_constant_i32(a->addr & 0xffff));
+}
+
+static bool do_stq(DisasContext *ctx, TCGv_i32 ea)
+{
+    TCGv_i32 d = tcg_temp_new_i32();
+    TCGv_i32 w = tcg_temp_new_i32();
+
+    gen_get_d(d);
+    gen_get_w(w);
+    gen_st32(ea, d, w);
+    return true;
+}
+
+static bool trans_STQ_dir(DisasContext *ctx, arg_STQ_dir *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_stq(ctx, gen_ea_direct(a->addr));
+}
+
+static bool trans_STQ_idx(DisasContext *ctx, arg_STQ_idx *a)
+{
+    TCGv_i32 ea;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    if (gen_ea_indexed(ctx, &ea)) {
+        do_stq(ctx, ea);
+    }
+    return true;
+}
+
+static bool trans_STQ_ext(DisasContext *ctx, arg_STQ_ext *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_stq(ctx, tcg_constant_i32(a->addr & 0xffff));
+}
+
+#define TRANS_6309_RMW16_D(name, fn)                                    \
+static bool trans_##name(DisasContext *ctx, arg_##name *a)              \
+{                                                                       \
+    TCGv_i32 d;                                                         \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    d = tcg_temp_new_i32();                                             \
+    gen_get_d(d);                                                       \
+    fn(d);                                                              \
+    gen_set_d(d);                                                       \
+    return true;                                                        \
+}
+
+#define TRANS_6309_RMW16_W(name, fn)                                    \
+static bool trans_##name(DisasContext *ctx, arg_##name *a)              \
+{                                                                       \
+    TCGv_i32 w;                                                         \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    w = tcg_temp_new_i32();                                             \
+    gen_get_w(w);                                                       \
+    fn(w);                                                              \
+    gen_set_w(w);                                                       \
+    return true;                                                        \
+}
+
+#define TRANS_6309_RMW8(name, dest, fn)                                 \
+static bool trans_##name(DisasContext *ctx, arg_##name *a)              \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    fn(dest);                                                           \
+    return true;                                                        \
+}
+
+TRANS_6309_RMW16_D(NEGD, gen_neg16)
+TRANS_6309_RMW16_D(COMD, gen_com16)
+TRANS_6309_RMW16_D(LSRD, gen_lsr16)
+TRANS_6309_RMW16_D(RORD, gen_ror16)
+TRANS_6309_RMW16_D(ASRD, gen_asr16)
+TRANS_6309_RMW16_D(ASLD, gen_asl16)
+TRANS_6309_RMW16_D(ROLD, gen_rol16)
+TRANS_6309_RMW16_D(DECD, gen_dec16)
+TRANS_6309_RMW16_D(INCD, gen_inc16)
+TRANS_6309_RMW16_D(CLRD, gen_clr16)
+
+TRANS_6309_RMW16_W(COMW, gen_com16)
+TRANS_6309_RMW16_W(LSRW, gen_lsr16)
+TRANS_6309_RMW16_W(RORW, gen_ror16)
+TRANS_6309_RMW16_W(ROLW, gen_rol16)
+TRANS_6309_RMW16_W(DECW, gen_dec16)
+TRANS_6309_RMW16_W(INCW, gen_inc16)
+TRANS_6309_RMW16_W(CLRW, gen_clr16)
+
+TRANS_6309_RMW8(COME, cpu_e, gen_com8)
+TRANS_6309_RMW8(DECE, cpu_e, gen_dec8)
+TRANS_6309_RMW8(INCE, cpu_e, gen_inc8)
+TRANS_6309_RMW8(CLRE, cpu_e, gen_clr8)
+TRANS_6309_RMW8(COMF, cpu_f, gen_com8)
+TRANS_6309_RMW8(DECF, cpu_f, gen_dec8)
+TRANS_6309_RMW8(INCF, cpu_f, gen_inc8)
+TRANS_6309_RMW8(CLRF, cpu_f, gen_clr8)
+
+static bool trans_TSTD(DisasContext *ctx, arg_TSTD *a)
+{
+    TCGv_i32 d;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    d = tcg_temp_new_i32();
+    gen_get_d(d);
+    gen_logic_cc16(d);
+    return true;
+}
+
+static bool trans_TSTW(DisasContext *ctx, arg_TSTW *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    gen_get_w(w);
+    gen_logic_cc16(w);
+    return true;
+}
+
+static bool trans_TSTE(DisasContext *ctx, arg_TSTE *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    gen_logic_cc8(cpu_e);
+    return true;
+}
+
+static bool trans_TSTF(DisasContext *ctx, arg_TSTF *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    gen_logic_cc8(cpu_f);
+    return true;
+}
+
+static bool tfr_reg_is_16(int r)
+{
+    return r <= 7;
+}
+
+static void rr_read(DisasContext *ctx, int r, bool dest16, TCGv_i32 tmp)
+{
+    switch (r) {
+    case 0:
+        gen_get_d(tmp);
+        break;
+    case 1:
+        tcg_gen_mov_i32(tmp, cpu_x);
+        break;
+    case 2:
+        tcg_gen_mov_i32(tmp, cpu_y);
+        break;
+    case 3:
+        tcg_gen_mov_i32(tmp, cpu_u);
+        break;
+    case 4:
+        tcg_gen_mov_i32(tmp, cpu_s);
+        break;
+    case 5:
+        tcg_gen_movi_i32(tmp, ctx->base.pc_next & 0xffff);
+        break;
+    case 6:
+        gen_get_w(tmp);
+        break;
+    case 7:
+        tcg_gen_mov_i32(tmp, cpu_v);
+        break;
+    case 8:
+        if (dest16) {
+            gen_get_d(tmp);
+        } else {
+            tcg_gen_mov_i32(tmp, cpu_a);
+        }
+        break;
+    case 9:
+        if (dest16) {
+            gen_get_d(tmp);
+        } else {
+            tcg_gen_mov_i32(tmp, cpu_b);
+        }
+        break;
+    case 10:
+        if (dest16) {
+            tcg_gen_mov_i32(tmp, cpu_cc);
+        } else {
+            tcg_gen_mov_i32(tmp, cpu_cc);
+        }
+        break;
+    case 11:
+        if (dest16) {
+            tcg_gen_shli_i32(tmp, cpu_dp, 8);
+        } else {
+            tcg_gen_mov_i32(tmp, cpu_dp);
+        }
+        break;
+    case 12:
+    case 13:
+        tcg_gen_movi_i32(tmp, 0);
+        break;
+    case 14:
+        if (dest16) {
+            gen_get_w(tmp);
+        } else {
+            tcg_gen_mov_i32(tmp, cpu_e);
+        }
+        break;
+    case 15:
+        if (dest16) {
+            gen_get_w(tmp);
+        } else {
+            tcg_gen_mov_i32(tmp, cpu_f);
+        }
+        break;
+    default:
+        g_assert_not_reached();
+    }
+    if (!dest16) {
+        tcg_gen_andi_i32(tmp, tmp, 0xff);
+    } else {
+        tcg_gen_andi_i32(tmp, tmp, 0xffff);
+    }
+}
+
+static void rr_write(DisasContext *ctx, int r, TCGv_i32 val, bool dest16)
+{
+    if (r == 12 || r == 13) {
+        return;
+    }
+    if (dest16) {
+        tfr_write(ctx, r, val);
+    } else {
+        tcg_gen_andi_i32(val, val, 0xff);
+        switch (r) {
+        case 8:
+            tcg_gen_mov_i32(cpu_a, val);
+            break;
+        case 9:
+            tcg_gen_mov_i32(cpu_b, val);
+            break;
+        case 10:
+            tcg_gen_mov_i32(cpu_cc, val);
+            break;
+        case 11:
+            tcg_gen_mov_i32(cpu_dp, val);
+            break;
+        case 14:
+            tcg_gen_mov_i32(cpu_e, val);
+            break;
+        case 15:
+            tcg_gen_mov_i32(cpu_f, val);
+            break;
+        default:
+            /* 16-bit dest encoded as 8-bit: write low byte via TFR map. */
+            tfr_write(ctx, r, val);
+            break;
+        }
+    }
+}
+
+typedef enum {
+    M6809_RR_ADD,
+    M6809_RR_ADC,
+    M6809_RR_SUB,
+    M6809_RR_SBC,
+    M6809_RR_AND,
+    M6809_RR_OR,
+    M6809_RR_EOR,
+    M6809_RR_CMP,
+} M6809RrOp;
+
+static bool do_reg_reg(DisasContext *ctx, int post, M6809RrOp op)
+{
+    int src = (post >> 4) & 0xf;
+    int dst = post & 0xf;
+    bool dest16 = tfr_reg_is_16(dst) || dst == 12 || dst == 13;
+    TCGv_i32 dval = tcg_temp_new_i32();
+    TCGv_i32 sval = tcg_temp_new_i32();
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+
+    rr_read(ctx, dst, dest16, dval);
+    rr_read(ctx, src, dest16, sval);
+
+    switch (op) {
+    case M6809_RR_ADD:
+        if (dest16) {
+            gen_add16_common(dval, sval, false);
+        } else {
+            gen_add8_noh(dval, sval, false);
+        }
+        break;
+    case M6809_RR_ADC:
+        if (dest16) {
+            gen_add16_common(dval, sval, true);
+        } else {
+            gen_add8_noh(dval, sval, true);
+        }
+        break;
+    case M6809_RR_SUB:
+        if (dest16) {
+            gen_sub16_common(dval, sval, false, true);
+        } else {
+            gen_sub8(dval, sval);
+        }
+        break;
+    case M6809_RR_SBC:
+        if (dest16) {
+            gen_sub16_common(dval, sval, true, true);
+        } else {
+            gen_sbc8(dval, sval);
+        }
+        break;
+    case M6809_RR_AND:
+        if (dest16) {
+            gen_logic16(dval, sval, M6809_LOGIC_AND, true);
+        } else {
+            gen_logic8(dval, sval, M6809_LOGIC_AND, true);
+        }
+        break;
+    case M6809_RR_OR:
+        if (dest16) {
+            gen_logic16(dval, sval, M6809_LOGIC_OR, true);
+        } else {
+            gen_logic8(dval, sval, M6809_LOGIC_OR, true);
+        }
+        break;
+    case M6809_RR_EOR:
+        if (dest16) {
+            gen_logic16(dval, sval, M6809_LOGIC_EOR, true);
+        } else {
+            gen_logic8(dval, sval, M6809_LOGIC_EOR, true);
+        }
+        break;
+    case M6809_RR_CMP:
+        if (dest16) {
+            gen_sub16_common(dval, sval, false, false);
+        } else {
+            gen_cmp8(dval, sval);
+        }
+        break;
+    default:
+        g_assert_not_reached();
+    }
+
+    if (op != M6809_RR_CMP) {
+        rr_write(ctx, dst, dval, dest16);
+        if (dst == 10) {
+            gen_exit_after_cc_write(ctx);
+        }
+    }
+    return true;
+}
+
+static bool trans_ADDR(DisasContext *ctx, arg_ADDR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_ADD);
+}
+
+static bool trans_ADCR(DisasContext *ctx, arg_ADCR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_ADC);
+}
+
+static bool trans_SUBR(DisasContext *ctx, arg_SUBR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_SUB);
+}
+
+static bool trans_SBCR(DisasContext *ctx, arg_SBCR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_SBC);
+}
+
+static bool trans_ANDR(DisasContext *ctx, arg_ANDR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_AND);
+}
+
+static bool trans_ORR(DisasContext *ctx, arg_ORR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_OR);
+}
+
+static bool trans_EORR(DisasContext *ctx, arg_EORR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_EOR);
+}
+
+static bool trans_CMPR(DisasContext *ctx, arg_CMPR *a)
+{
+    return do_reg_reg(ctx, a->post, M6809_RR_CMP);
+}
+
+static bool trans_PSHSW(DisasContext *ctx, arg_PSHSW *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    gen_get_w(w);
+    gen_push16(cpu_s, w);
+    return true;
+}
+
+static bool trans_PULSW(DisasContext *ctx, arg_PULSW *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    gen_pull16(cpu_s, w);
+    gen_set_w(w);
+    return true;
+}
+
+static bool trans_PSHUW(DisasContext *ctx, arg_PSHUW *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    gen_get_w(w);
+    gen_push16(cpu_u, w);
+    return true;
+}
+
+static bool trans_PULUW(DisasContext *ctx, arg_PULUW *a)
+{
+    TCGv_i32 w;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    w = tcg_temp_new_i32();
+    gen_pull16(cpu_u, w);
+    gen_set_w(w);
+    return true;
+}
+
+static bool do_divd(DisasContext *ctx, TCGv_i32 src)
+{
+    tcg_gen_movi_i32(cpu_pc, ctx->base.pc_next & 0xffff);
+    gen_helper_divd(tcg_env, src);
+    return true;
+}
+
+static bool trans_DIVD_imm(DisasContext *ctx, arg_DIVD_imm *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_divd(ctx, tcg_constant_i32(a->imm & 0xff));
+}
+
+static bool trans_DIVD_dir(DisasContext *ctx, arg_DIVD_dir *a)
+{
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    src = tcg_temp_new_i32();
+    tcg_gen_qemu_ld_i32(src, gen_ea_direct(a->addr), 0, MO_UB);
+    return do_divd(ctx, src);
+}
+
+static bool trans_DIVD_idx(DisasContext *ctx, arg_DIVD_idx *a)
+{
+    TCGv_i32 ea;
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    if (gen_ea_indexed(ctx, &ea)) {
+        src = tcg_temp_new_i32();
+        tcg_gen_qemu_ld_i32(src, ea, 0, MO_UB);
+        do_divd(ctx, src);
+    }
+    return true;
+}
+
+static bool trans_DIVD_ext(DisasContext *ctx, arg_DIVD_ext *a)
+{
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    src = tcg_temp_new_i32();
+    tcg_gen_qemu_ld_i32(src, tcg_constant_i32(a->addr & 0xffff), 0, MO_UB);
+    return do_divd(ctx, src);
+}
+
+static bool do_divq(DisasContext *ctx, TCGv_i32 src)
+{
+    tcg_gen_movi_i32(cpu_pc, ctx->base.pc_next & 0xffff);
+    gen_helper_divq(tcg_env, src);
+    return true;
+}
+
+static bool trans_DIVQ_imm(DisasContext *ctx, arg_DIVQ_imm *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_divq(ctx, tcg_constant_i32(a->imm & 0xffff));
+}
+
+static bool trans_DIVQ_dir(DisasContext *ctx, arg_DIVQ_dir *a)
+{
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    src = tcg_temp_new_i32();
+    gen_ld16_wrapped(src, gen_ea_direct(a->addr));
+    return do_divq(ctx, src);
+}
+
+static bool trans_DIVQ_idx(DisasContext *ctx, arg_DIVQ_idx *a)
+{
+    TCGv_i32 ea;
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    if (gen_ea_indexed(ctx, &ea)) {
+        src = tcg_temp_new_i32();
+        gen_ld16_wrapped(src, ea);
+        do_divq(ctx, src);
+    }
+    return true;
+}
+
+static bool trans_DIVQ_ext(DisasContext *ctx, arg_DIVQ_ext *a)
+{
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    src = tcg_temp_new_i32();
+    gen_ld16_wrapped(src, tcg_constant_i32(a->addr & 0xffff));
+    return do_divq(ctx, src);
+}
+
+static bool do_muld(DisasContext *ctx, TCGv_i32 src)
+{
+    gen_helper_muld(tcg_env, src);
+    return true;
+}
+
+static bool trans_MULD_imm(DisasContext *ctx, arg_MULD_imm *a)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    return do_muld(ctx, tcg_constant_i32(a->imm & 0xffff));
+}
+
+static bool trans_MULD_dir(DisasContext *ctx, arg_MULD_dir *a)
+{
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    src = tcg_temp_new_i32();
+    gen_ld16_wrapped(src, gen_ea_direct(a->addr));
+    return do_muld(ctx, src);
+}
+
+static bool trans_MULD_idx(DisasContext *ctx, arg_MULD_idx *a)
+{
+    TCGv_i32 ea;
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    if (gen_ea_indexed(ctx, &ea)) {
+        src = tcg_temp_new_i32();
+        gen_ld16_wrapped(src, ea);
+        do_muld(ctx, src);
+    }
+    return true;
+}
+
+static bool trans_MULD_ext(DisasContext *ctx, arg_MULD_ext *a)
+{
+    TCGv_i32 src;
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    src = tcg_temp_new_i32();
+    gen_ld16_wrapped(src, tcg_constant_i32(a->addr & 0xffff));
+    return do_muld(ctx, src);
+}
+
+static bool do_bitop(DisasContext *ctx, int op, int post, int addr)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    tcg_gen_movi_i32(cpu_pc, ctx->base.pc_next & 0xffff);
+    gen_helper_bitop(tcg_env, tcg_constant_i32(op),
+                     tcg_constant_i32(post & 0xff),
+                     tcg_constant_i32(addr & 0xff));
+    if (((post >> 6) & 3) == 0) {
+        gen_exit_after_cc_write(ctx);
+    }
+    return true;
+}
+
+static bool trans_BAND(DisasContext *ctx, arg_BAND *a)
+{
+    return do_bitop(ctx, 0, a->post, a->addr);
+}
+
+static bool trans_BIAND(DisasContext *ctx, arg_BIAND *a)
+{
+    return do_bitop(ctx, 1, a->post, a->addr);
+}
+
+static bool trans_BOR(DisasContext *ctx, arg_BOR *a)
+{
+    return do_bitop(ctx, 2, a->post, a->addr);
+}
+
+static bool trans_BIOR(DisasContext *ctx, arg_BIOR *a)
+{
+    return do_bitop(ctx, 3, a->post, a->addr);
+}
+
+static bool trans_BEOR(DisasContext *ctx, arg_BEOR *a)
+{
+    return do_bitop(ctx, 4, a->post, a->addr);
+}
+
+static bool trans_BIEOR(DisasContext *ctx, arg_BIEOR *a)
+{
+    return do_bitop(ctx, 5, a->post, a->addr);
+}
+
+static bool trans_LDBT(DisasContext *ctx, arg_LDBT *a)
+{
+    return do_bitop(ctx, 6, a->post, a->addr);
+}
+
+static bool trans_STBT(DisasContext *ctx, arg_STBT *a)
+{
+    return do_bitop(ctx, 7, a->post, a->addr);
+}
+
+static bool do_tfm(DisasContext *ctx, int variant, int post)
+{
+    if (!require_6309(ctx)) {
+        return true;
+    }
+    tcg_gen_movi_i32(cpu_pc, ctx->base.pc_next & 0xffff);
+    gen_helper_tfm(tcg_env, tcg_constant_i32(variant),
+                   tcg_constant_i32(post & 0xff));
+    return true;
+}
+
+static bool trans_TFM_pp(DisasContext *ctx, arg_TFM_pp *a)
+{
+    return do_tfm(ctx, 0, a->post);
+}
+
+static bool trans_TFM_mm(DisasContext *ctx, arg_TFM_mm *a)
+{
+    return do_tfm(ctx, 1, a->post);
+}
+
+static bool trans_TFM_p0(DisasContext *ctx, arg_TFM_p0 *a)
+{
+    return do_tfm(ctx, 2, a->post);
+}
+
+static bool trans_TFM_0p(DisasContext *ctx, arg_TFM_0p *a)
+{
+    return do_tfm(ctx, 3, a->post);
+}
+
 static bool trans_LDMD(DisasContext *ctx, arg_LDMD *a)
 {
     uint32_t imm = a->imm & (MD_NM | MD_FM);
@@ -2410,6 +3704,28 @@ static bool trans_LDMD(DisasContext *ctx, arg_LDMD *a)
     tcg_gen_ori_i32(cpu_md, cpu_md, imm);
     /* NM is a TB flag; leave the block even if this LDMD does not toggle it. */
     ctx->base.is_jmp = DISAS_UPDATE_EXIT;
+    return true;
+}
+
+static bool trans_BITMD(DisasContext *ctx, arg_BITMD *a)
+{
+    TCGv_i32 t;
+    TCGv_i32 z;
+    uint32_t mask = a->imm & (MD_IL | MD_DZ);
+
+    if (!require_6309(ctx)) {
+        return true;
+    }
+
+    /* Test MD.IL/DZ against the corresponding immediate bits; then clear them. */
+    t = tcg_temp_new_i32();
+    z = tcg_temp_new_i32();
+    tcg_gen_andi_i32(t, cpu_md, mask);
+    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~CC_Z);
+    tcg_gen_setcondi_i32(TCG_COND_EQ, z, t, 0);
+    tcg_gen_shli_i32(z, z, 2);
+    tcg_gen_or_i32(cpu_cc, cpu_cc, z);
+    tcg_gen_andi_i32(cpu_md, cpu_md, ~mask & 0xff);
     return true;
 }
 

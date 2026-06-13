@@ -276,7 +276,6 @@ INSN(RTI,      "rti",  "")
 INSN(SWI,      "swi",  "")
 INSN(SWI2,     "swi2", "")
 INSN(SWI3,     "swi3", "")
-INSN(LDMD,     "ldmd", "#$%02x", a->imm)
 
 static bool trans_BSR(DisasContext *ctx, arg_BSR *a)
 {
@@ -380,6 +379,126 @@ INSN_MEM(STS, "sts")
 INSN(SEX,      "sex",  "")
 INSN(EXG,      "exg",  "$%02x", a->post)
 INSN(TFR,      "tfr",  "$%02x", a->post)
+
+INSN(INH14,    "sexw", "")
+INSN(LDMD,     "ldmd", "#$%02x", a->imm)
+INSN(BITMD,    "bitmd", "#$%02x", a->imm)
+INSN(PSHSW,    "pshsw", "")
+INSN(PULSW,    "pulsw", "")
+INSN(PSHUW,    "pshuw", "")
+INSN(PULUW,    "puluw", "")
+INSN(NEGD,     "negd", "")
+INSN(COMD,     "comd", "")
+INSN(LSRD,     "lsrd", "")
+INSN(RORD,     "rord", "")
+INSN(ASRD,     "asrd", "")
+INSN(ASLD,     "asld", "")
+INSN(ROLD,     "rold", "")
+INSN(DECD,     "decd", "")
+INSN(INCD,     "incd", "")
+INSN(TSTD,     "tstd", "")
+INSN(CLRD,     "clrd", "")
+INSN(COMW,     "comw", "")
+INSN(LSRW,     "lsrw", "")
+INSN(RORW,     "rorw", "")
+INSN(ROLW,     "rolw", "")
+INSN(DECW,     "decw", "")
+INSN(INCW,     "incw", "")
+INSN(TSTW,     "tstw", "")
+INSN(CLRW,     "clrw", "")
+INSN(COME,     "come", "")
+INSN(DECE,     "dece", "")
+INSN(INCE,     "ince", "")
+INSN(TSTE,     "tste", "")
+INSN(CLRE,     "clre", "")
+INSN(COMF,     "comf", "")
+INSN(DECF,     "decf", "")
+INSN(INCF,     "incf", "")
+INSN(TSTF,     "tstf", "")
+INSN(CLRF,     "clrf", "")
+INSN(ADDR,     "addr", "$%02x", a->post)
+INSN(ADCR,     "adcr", "$%02x", a->post)
+INSN(SUBR,     "subr", "$%02x", a->post)
+INSN(SBCR,     "sbcr", "$%02x", a->post)
+INSN(ANDR,     "andr", "$%02x", a->post)
+INSN(ORR,      "orr",  "$%02x", a->post)
+INSN(EORR,     "eorr", "$%02x", a->post)
+INSN(CMPR,     "cmpr", "$%02x", a->post)
+
+INSN8(LDE, "lde")
+INSN_MEM(STE, "ste")
+INSN8(LDF, "ldf")
+INSN_MEM(STF, "stf")
+INSN16(LDW, "ldw")
+INSN_MEM(STW, "stw")
+INSN_MEM(LDQ, "ldq")
+INSN_MEM(STQ, "stq")
+
+INSN8(DIVD, "divd")
+INSN16(DIVQ, "divq")
+INSN16(MULD, "muld")
+
+static bool trans_LDQ_imm(DisasContext *ctx, arg_LDQ_imm *a)
+{
+    uint8_t b[4];
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        if (!indexed_read8(ctx, &b[i])) {
+            return false;
+        }
+    }
+    output("ldq", "#$%02x%02x%02x%02x", b[0], b[1], b[2], b[3]);
+    return true;
+}
+
+#define IM_MEM_INSN(name, mnemonic)                                     \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    output(mnemonic, "#$%02x,<$%02x", a->imm, a->addr);                 \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    char operand[40];                                                   \
+                                                                        \
+    if (!format_indexed(ctx, operand, sizeof(operand))) {               \
+        return false;                                                   \
+    }                                                                   \
+    output(mnemonic, "#$%02x,%s", a->imm, operand);                     \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    output(mnemonic, "#$%02x,$%04x", a->imm, a->addr);                  \
+    return true;                                                        \
+}
+
+IM_MEM_INSN(AIM, "aim")
+IM_MEM_INSN(OIM, "oim")
+IM_MEM_INSN(EIM, "eim")
+IM_MEM_INSN(TIM, "tim")
+
+#define BIT_INSN(name, mnemonic)                                        \
+static bool trans_##name(DisasContext *ctx, arg_##name *a)              \
+{                                                                       \
+    output(mnemonic, "$%02x,<$%02x", a->post, a->addr);                 \
+    return true;                                                        \
+}
+
+BIT_INSN(BAND, "band")
+BIT_INSN(BIAND, "biand")
+BIT_INSN(BOR, "bor")
+BIT_INSN(BIOR, "bior")
+BIT_INSN(BEOR, "beor")
+BIT_INSN(BIEOR, "bieor")
+BIT_INSN(LDBT, "ldbt")
+BIT_INSN(STBT, "stbt")
+
+INSN(TFM_pp, "tfm", "$%02x+", a->post)
+INSN(TFM_mm, "tfm", "$%02x-", a->post)
+INSN(TFM_p0, "tfm", "$%02x+0", a->post)
+INSN(TFM_0p, "tfm", "$%02x0+", a->post)
 
 int m6809_print_insn(bfd_vma addr, disassemble_info *info)
 {

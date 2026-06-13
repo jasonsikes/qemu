@@ -239,6 +239,270 @@ G_NORETURN void helper_sync(CPUM6809State *env)
     cpu_loop_exit(cs);
 }
 
+static void m6809_set_nz32(CPUM6809State *env, uint32_t q)
+{
+    env->cc &= ~(CC_N | CC_Z | CC_V | CC_C);
+    if (q & 0x80000000u) {
+        env->cc |= CC_N;
+    }
+    if (q == 0) {
+        env->cc |= CC_Z;
+    }
+}
+
+void helper_muld(CPUM6809State *env, uint32_t src)
+{
+    int32_t result = (int16_t)m6809_get_d(env) * (int16_t)(src & 0xffff);
+
+    m6809_set_q(env, (uint32_t)result);
+    m6809_set_nz32(env, (uint32_t)result);
+}
+
+void helper_divd(CPUM6809State *env, uint32_t src)
+{
+    int32_t dividend = (int16_t)m6809_get_d(env);
+    int32_t divisor = (int8_t)(src & 0xff);
+    int32_t quot;
+    int32_t rem;
+    uint8_t b;
+
+    if (divisor == 0) {
+        helper_raise_division_by_zero(env);
+    }
+
+    quot = dividend / divisor;
+    rem = dividend % divisor;
+
+    env->cc &= ~(CC_N | CC_Z | CC_V | CC_C);
+
+    /* Range overflow: quotient does not fit in 8 bits. */
+    if (quot > 255 || quot < -128) {
+        env->cc |= CC_V;
+        return;
+    }
+
+    b = quot & 0xff;
+    env->a = rem & 0xff;
+    env->b = b;
+    if (b & 1) {
+        env->cc |= CC_C;
+    }
+    if (b == 0) {
+        env->cc |= CC_Z;
+    }
+    if (b & 0x80) {
+        env->cc |= CC_N;
+    }
+    /* Two's-complement overflow: fits unsigned 8-bit, not signed. */
+    if (quot > 127) {
+        env->cc |= CC_V;
+    }
+}
+
+void helper_divq(CPUM6809State *env, uint32_t src)
+{
+    int64_t dividend = (int32_t)m6809_get_q(env);
+    int64_t divisor = (int16_t)(src & 0xffff);
+    int64_t quot;
+    int64_t rem;
+    uint16_t w;
+
+    if (divisor == 0) {
+        helper_raise_division_by_zero(env);
+    }
+
+    quot = dividend / divisor;
+    rem = dividend % divisor;
+
+    env->cc &= ~(CC_N | CC_Z | CC_V | CC_C);
+
+    if (quot > 65535 || quot < -32768) {
+        env->cc |= CC_V;
+        return;
+    }
+
+    w = quot & 0xffff;
+    m6809_set_d(env, rem & 0xffff);
+    m6809_set_w(env, w);
+    if (w & 1) {
+        env->cc |= CC_C;
+    }
+    if (w == 0) {
+        env->cc |= CC_Z;
+    }
+    if (w & 0x8000) {
+        env->cc |= CC_N;
+    }
+    if (quot > 32767) {
+        env->cc |= CC_V;
+    }
+}
+
+static uint16_t tfm_get_reg(CPUM6809State *env, int r)
+{
+    switch (r) {
+    case 0:
+        return m6809_get_d(env);
+    case 1:
+        return env->x;
+    case 2:
+        return env->y;
+    case 3:
+        return env->u;
+    case 4:
+        return env->s;
+    default:
+        g_assert_not_reached();
+    }
+}
+
+static void tfm_set_reg(CPUM6809State *env, int r, uint16_t val)
+{
+    switch (r) {
+    case 0:
+        m6809_set_d(env, val);
+        break;
+    case 1:
+        env->x = val;
+        break;
+    case 2:
+        env->y = val;
+        break;
+    case 3:
+        env->u = val;
+        break;
+    case 4:
+        env->s = val;
+        env->nmi_armed = true;
+        break;
+    default:
+        g_assert_not_reached();
+    }
+}
+
+/*
+ * TFM is not interruptible; W is the count and addresses wrap at $FFFF.
+ */
+void helper_tfm(CPUM6809State *env, uint32_t variant, uint32_t post)
+{
+    int src = (post >> 4) & 0xf;
+    int dst = post & 0xf;
+    uint16_t count;
+
+    if (src > 4 || dst > 4) {
+        helper_raise_illegal_instruction(env);
+    }
+
+    count = m6809_get_w(env);
+    while (count) {
+        uint16_t sa = tfm_get_reg(env, src);
+        uint16_t da = tfm_get_reg(env, dst);
+        uint8_t b = cpu_ldub_mmuidx_ra(env, sa, 0, 0);
+
+        cpu_stb_mmuidx_ra(env, da, b, 0, 0);
+        switch (variant) {
+        case 0:
+            sa++;
+            da++;
+            break;
+        case 1:
+            sa--;
+            da--;
+            break;
+        case 2:
+            sa++;
+            break;
+        case 3:
+            da++;
+            break;
+        default:
+            g_assert_not_reached();
+        }
+        tfm_set_reg(env, src, sa & 0xffff);
+        tfm_set_reg(env, dst, da & 0xffff);
+        count--;
+        m6809_set_w(env, count);
+    }
+}
+
+static uint32_t *bitop_reg(CPUM6809State *env, int code)
+{
+    switch (code) {
+    case 0:
+        return &env->cc;
+    case 1:
+        return &env->a;
+    case 2:
+        return &env->b;
+    default:
+        return NULL;
+    }
+}
+
+void helper_bitop(CPUM6809State *env, uint32_t op, uint32_t post, uint32_t addr)
+{
+    int rcode = (post >> 6) & 3;
+    int bit_hi = (post >> 3) & 7;
+    int bit_lo = post & 7;
+    uint32_t *reg = bitop_reg(env, rcode);
+    uint8_t mem;
+    int mem_bit;
+    int reg_bit;
+    bool src;
+    bool dst;
+    bool result;
+
+    if (!reg) {
+        helper_raise_illegal_instruction(env);
+    }
+
+    addr = ((env->dp << 8) | (addr & 0xff)) & 0xffff;
+    mem = cpu_ldub_mmuidx_ra(env, addr, 0, 0);
+
+    if (op == 7) {
+        /* STBT: register bit_hi -> memory bit_lo */
+        reg_bit = bit_hi;
+        mem_bit = bit_lo;
+        src = (*reg >> reg_bit) & 1;
+        mem = (mem & ~(1u << mem_bit)) | ((uint8_t)src << mem_bit);
+        cpu_stb_mmuidx_ra(env, addr, mem, 0, 0);
+        return;
+    }
+
+    /* Others: memory bit_hi, register bit_lo */
+    mem_bit = bit_hi;
+    reg_bit = bit_lo;
+    src = (mem >> mem_bit) & 1;
+    dst = (*reg >> reg_bit) & 1;
+    switch (op) {
+    case 0: /* BAND */
+        result = dst && src;
+        break;
+    case 1: /* BIAND */
+        result = dst && !src;
+        break;
+    case 2: /* BOR */
+        result = dst || src;
+        break;
+    case 3: /* BIOR */
+        result = dst || !src;
+        break;
+    case 4: /* BEOR */
+        result = dst != src;
+        break;
+    case 5: /* BIEOR */
+        result = dst == src;
+        break;
+    case 6: /* LDBT */
+        result = src;
+        break;
+    default:
+        g_assert_not_reached();
+    }
+    *reg = (*reg & ~(1u << reg_bit)) | ((uint32_t)result << reg_bit);
+    *reg &= 0xff;
+}
+
 hwaddr m6809_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 {
     return addr & 0xffff;
