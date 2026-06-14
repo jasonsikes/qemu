@@ -13,8 +13,10 @@
 
 #include "coco3.h"
 
-#define COCO3_DISPLAY_WIDTH  640
-#define COCO3_DISPLAY_HEIGHT 240
+#define COCO3_DISPLAY_WIDTH   640
+#define COCO3_RASTER_HEIGHT   240
+#define COCO3_YSCALE          2
+#define COCO3_DISPLAY_HEIGHT  (COCO3_RASTER_HEIGHT * COCO3_YSCALE)
 
 void coco3_video_init(Coco3State *s);
 void coco3_video_reset(Coco3State *s);

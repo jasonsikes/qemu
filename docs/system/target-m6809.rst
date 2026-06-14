@@ -22,7 +22,8 @@ The ``coco3`` machine includes:
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
 - Virt disk at ``$FF30`` (first ``-drive``)
 - Virt RTC at ``$FF50`` (host time; ``-rtc``; NitrOS-9 ``Clock2``)
-- Graphic console: fixed 640×240 window. GIME graphics (2/4/16 color at
+- Graphic console: 640×480 window (240-line NTSC raster, each scanline
+  doubled). GIME graphics (2/4/16 color at
   the documented HRES/CRES pairs, 192/200/225 lines) and 32/40/64/80-column
   text (8×8 glyphs). With ``INIT0.COCO`` (set on ``-bios``
   reset), VDG-compat 32×16 text (including SG4 codes ``$80``–``$FF``)
