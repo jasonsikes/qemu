@@ -63,8 +63,11 @@ static char *write_stub_rom(void)
     return path;
 }
 
-static QTestState *coco3_vm_new(void)
+static QTestState *coco3_vm_new(const char *cpu)
 {
+    if (cpu) {
+        return qtest_initf("-M coco3 -cpu %s -bios %s", cpu, rom_path);
+    }
     return qtest_initf("-M coco3 -bios %s", rom_path);
 }
 
@@ -102,9 +105,9 @@ static uint8_t scan_col(QTestState *s, int col)
     return qtest_readb(s, PIA0_DA);
 }
 
-static void test_keyboard_a(void)
+static void test_keyboard_a(const void *data)
 {
-    QTestState *s = coco3_vm_new();
+    QTestState *s = coco3_vm_new(data);
 
     pia0_kbd_init(s);
 
@@ -125,9 +128,9 @@ static void test_keyboard_a(void)
     qtest_quit(s);
 }
 
-static void test_keyboard_modifiers(void)
+static void test_keyboard_modifiers(const void *data)
 {
-    QTestState *s = coco3_vm_new();
+    QTestState *s = coco3_vm_new(data);
 
     pia0_kbd_init(s);
 
@@ -153,9 +156,9 @@ static void test_keyboard_modifiers(void)
     qtest_quit(s);
 }
 
-static void test_keyboard_glyphs(void)
+static void test_keyboard_glyphs(const void *data)
 {
-    QTestState *s = coco3_vm_new();
+    QTestState *s = coco3_vm_new(data);
 
     pia0_kbd_init(s);
 
@@ -252,9 +255,9 @@ static void send_btn(QTestState *s, const char *button, bool down)
     }
 }
 
-static void test_joystick_dac(void)
+static void test_joystick_dac(const void *data)
 {
-    QTestState *s = coco3_vm_new();
+    QTestState *s = coco3_vm_new(data);
 
     pia0_kbd_init(s);
     pia1_dac_init(s);
@@ -289,9 +292,9 @@ static void test_joystick_dac(void)
     qtest_quit(s);
 }
 
-static void test_joystick_buttons(void)
+static void test_joystick_buttons(const void *data)
 {
-    QTestState *s = coco3_vm_new();
+    QTestState *s = coco3_vm_new(data);
 
     pia0_kbd_init(s);
 
@@ -317,9 +320,9 @@ static void mouse_init(QTestState *s)
     qtest_writeb(s, GIME_IRQEN, GIME_IRQ_CART);
 }
 
-static void test_mouse_packet(void)
+static void test_mouse_packet(const void *data)
 {
-    QTestState *s = coco3_vm_new();
+    QTestState *s = coco3_vm_new(data);
 
     mouse_init(s);
     g_assert_cmphex(qtest_readb(s, MOUSE_IS) & 0x07, ==, 0);
@@ -340,15 +343,20 @@ static void test_mouse_packet(void)
     qtest_quit(s);
 }
 
-static QTestState *coco3_vm_new_rtc(void)
+static QTestState *coco3_vm_new_rtc(const char *cpu)
 {
+    if (cpu) {
+        return qtest_initf(
+            "-M coco3 -cpu %s -bios %s -rtc base=2026-08-21T21:00:00,clock=vm",
+            cpu, rom_path);
+    }
     return qtest_initf("-M coco3 -bios %s -rtc base=2026-08-21T21:00:00,clock=vm",
                        rom_path);
 }
 
-static void test_virt_rtc(void)
+static void test_virt_rtc(const void *data)
 {
-    QTestState *s = coco3_vm_new_rtc();
+    QTestState *s = coco3_vm_new_rtc(data);
     uint8_t sec0, sec1;
 
     g_assert_cmphex(qtest_readb(s, VRTC_MAGIC), ==, 'Q');
@@ -370,6 +378,33 @@ static void test_virt_rtc(void)
     qtest_quit(s);
 }
 
+static void add_coco3_tests(const char *prefix, const char *cpu)
+{
+    char *path;
+
+    path = g_strdup_printf("%s/keyboard/a", prefix);
+    qtest_add_data_func(path, cpu, test_keyboard_a);
+    g_free(path);
+    path = g_strdup_printf("%s/keyboard/modifiers", prefix);
+    qtest_add_data_func(path, cpu, test_keyboard_modifiers);
+    g_free(path);
+    path = g_strdup_printf("%s/keyboard/glyphs", prefix);
+    qtest_add_data_func(path, cpu, test_keyboard_glyphs);
+    g_free(path);
+    path = g_strdup_printf("%s/joystick/dac", prefix);
+    qtest_add_data_func(path, cpu, test_joystick_dac);
+    g_free(path);
+    path = g_strdup_printf("%s/joystick/buttons", prefix);
+    qtest_add_data_func(path, cpu, test_joystick_buttons);
+    g_free(path);
+    path = g_strdup_printf("%s/mouse/packet", prefix);
+    qtest_add_data_func(path, cpu, test_mouse_packet);
+    g_free(path);
+    path = g_strdup_printf("%s/virt-rtc", prefix);
+    qtest_add_data_func(path, cpu, test_virt_rtc);
+    g_free(path);
+}
+
 int main(int argc, char **argv)
 {
     int ret;
@@ -377,13 +412,8 @@ int main(int argc, char **argv)
     g_test_init(&argc, &argv, NULL);
 
     rom_path = write_stub_rom();
-    qtest_add_func("/coco3/keyboard/a", test_keyboard_a);
-    qtest_add_func("/coco3/keyboard/modifiers", test_keyboard_modifiers);
-    qtest_add_func("/coco3/keyboard/glyphs", test_keyboard_glyphs);
-    qtest_add_func("/coco3/joystick/dac", test_joystick_dac);
-    qtest_add_func("/coco3/joystick/buttons", test_joystick_buttons);
-    qtest_add_func("/coco3/mouse/packet", test_mouse_packet);
-    qtest_add_func("/coco3/virt-rtc", test_virt_rtc);
+    add_coco3_tests("/coco3", NULL);
+    add_coco3_tests("/coco3/hd6309", "hd6309");
 
     ret = g_test_run();
 

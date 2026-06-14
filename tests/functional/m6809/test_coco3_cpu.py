@@ -690,5 +690,17 @@ class Coco3MachineTest(QemuSystemTest):
         self.assertEqual(rgb(x0 + 2, y0 + 1), red)
 
 
+class Coco3Hd6309MachineTest(Coco3MachineTest):
+    """Same machine tests on -cpu hd6309 (emulation mode, 6809 opcodes)."""
+
+    cpu = 'hd6309'
+
+    def test_gime_text(self):
+        self.skipTest('GIME text scanout is covered on the default CPU')
+
+    def test_vdg_text(self):
+        self.skipTest('VDG text scanout is covered on the default CPU')
+
+
 if __name__ == '__main__':
     QemuSystemTest.main()

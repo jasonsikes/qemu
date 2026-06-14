@@ -53,8 +53,10 @@ static const IsaCase isa_cases[] = {
 };
 
 static QTestState *qts;
+static QTestState *qts_hd6309;
 static char *rom_path;
 static bool ran;
+static bool ran_hd6309;
 
 static char *write_stub_rom(void)
 {
@@ -192,6 +194,20 @@ static void test_isa_case(const void *data)
     isa_run_case(data);
 }
 
+/* Same 6809 programs on -cpu hd6309 (emulation mode, no 6309 opcodes). */
+static void test_isa_case_hd6309(const void *data)
+{
+    QTestState *saved = qts;
+    bool saved_ran = ran;
+
+    qts = qts_hd6309;
+    ran = ran_hd6309;
+    isa_run_case(data);
+    ran_hd6309 = ran;
+    qts = saved;
+    ran = saved_ran;
+}
+
 static void test_invalid_indexed(void)
 {
     static const uint8_t code[] = {
@@ -277,6 +293,84 @@ static void test_hd6309_tfr_a_w(void)
     qtest_quit(s);
 }
 
+/* ldx #$1234; tfr x,v; tfr v,y */
+static void test_hd6309_tfr_v(void)
+{
+    static const uint8_t code[] = {
+        0x8e, 0x12, 0x34,       /* ldx #$1234 */
+        0x1f, 0x17,             /* tfr x,v */
+        0x1f, 0x72,             /* tfr v,y */
+    };
+    const IsaCase c = {
+        .name = "hd6309_tfr_v",
+        .disas = "ldx #$1234; tfr x,v; tfr v,y",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "X=1234", "V=1234", "Y=1234", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* lda #$ab; tfr a,e; lda #$cd; tfr a,f */
+static void test_hd6309_tfr_e_f(void)
+{
+    static const uint8_t code[] = {
+        0x86, 0xab,             /* lda #$ab */
+        0x1f, 0x8e,             /* tfr a,e */
+        0x86, 0xcd,             /* lda #$cd */
+        0x1f, 0x8f,             /* tfr a,f */
+    };
+    const IsaCase c = {
+        .name = "hd6309_tfr_e_f",
+        .disas = "lda #$ab; tfr a,e; lda #$cd; tfr a,f",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){
+            "A=cd", "E=ab", "F=cd", "W=abcd", NULL
+        },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* ldd #$1234; ldw #$abcd; exg d,w */
+static void test_hd6309_exg_d_w(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x12, 0x34,       /* ldd #$1234 */
+        0x10, 0x86, 0xab, 0xcd, /* ldw #$abcd */
+        0x1e, 0x06,             /* exg d,w */
+    };
+    const IsaCase c = {
+        .name = "hd6309_exg_d_w",
+        .disas = "ldd #$1234; ldw #$abcd; exg d,w",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "D=abcd", "W=1234", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* 6309 8→16 TFR duplicates the byte (6809 fills $FF; see tfr_a_x). */
+static void test_hd6309_tfr_a_x(void)
+{
+    static const uint8_t code[] = {
+        0x86, 0x5a,             /* lda #$5a */
+        0x1f, 0x81,             /* tfr a,x */
+    };
+    const IsaCase c = {
+        .name = "hd6309_tfr_a_x",
+        .disas = "lda #$5a; tfr a,x",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "A=5a", "X=5a5a", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
 /* ldx #$ffff; tfr 0,x — Zero reads 0, so X is cleared. */
 static void test_hd6309_tfr_zero_x(void)
 {
@@ -316,6 +410,27 @@ static void test_m6809_tfr_zero_halts(void)
     regs = wait_registers(s, "PC=8003", CASE_TIMEOUT_MS);
     g_assert_nonnull(strstr(regs, "PC=8003"));
     g_assert_nonnull(strstr(regs, "X=ffff"));
+    qtest_quit(s);
+}
+
+/* tfr a,w is 6309-only; a 6809 must halt on register code 6. */
+static void test_m6809_tfr_w_halts(void)
+{
+    static const uint8_t code[] = {
+        0x86, 0x5a,             /* lda #$5a */
+        0x1f, 0x86,             /* tfr a,w (illegal on 6809) */
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("m6809");
+    isa_load(s, &local_ran, code, sizeof(code), NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8002", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8002"));
+    g_assert_nonnull(strstr(regs, "A=5a"));
     qtest_quit(s);
 }
 
@@ -366,6 +481,28 @@ static void test_hd6309_index_w(void)
     g_assert_nonnull(strstr(regs, "PC=8007"));
     g_assert_nonnull(strstr(regs, "A=42"));
     g_assert_nonnull(strstr(regs, "W=80f0"));
+    qtest_quit(s);
+}
+
+/* lda ,w is 6309-only; a 6809 must halt on postbyte $8F. */
+static void test_m6809_index_w_halts(void)
+{
+    static const uint8_t code[] = {
+        0x86, 0x11,             /* lda #$11 */
+        0xa6, 0x8f,             /* lda ,w (illegal on 6809) */
+        0x86, 0x22,
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("m6809");
+    isa_load(s, &local_ran, code, sizeof(code), NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8002", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8002"));
+    g_assert_nonnull(strstr(regs, "A=11"));
     qtest_quit(s);
 }
 
@@ -677,6 +814,39 @@ static void test_hd6309_ldmd_bitmd(void)
     hd6309_isa_run(&c);
 }
 
+/*
+ * Illegal sets MD.IL. BITMD #$80 must leave IL (DZ was clear → Z).
+ * BITMD #$40 then sees IL (Z clear) and clears it.
+ */
+static void test_hd6309_bitmd_clears(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x15,                   /* illegal */
+    };
+    static const uint8_t handler[] = {
+        0x11, 0x3c, 0x80,       /* bitmd #$80 */
+        0x11, 0x3c, 0x40,       /* bitmd #$40 */
+        0x20, 0xfe,             /* bra * */
+    };
+    static const IsaVec vec[] = {
+        { 0xfff0, ROM_BASE + OPERAND_OFFSET },
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("hd6309");
+    isa_load(s, &local_ran, code, sizeof(code),
+             handler, sizeof(handler), NULL, 0, vec, ARRAY_SIZE(vec), false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=80f6", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=80f6"));
+    g_assert_nonnull(strstr(regs, "MD=00"));
+    g_assert_nonnull(strstr(regs, "CC=d0"));
+    qtest_quit(s);
+}
+
 static void test_hd6309_aim(void)
 {
     static const uint8_t code[] = {
@@ -698,6 +868,27 @@ static void test_hd6309_aim(void)
     hd6309_isa_run(&c);
 }
 
+static void test_hd6309_oim(void)
+{
+    static const uint8_t code[] = {
+        0x01, 0xf0, 0x20,       /* oim #$f0,<$20 */
+    };
+    static const uint8_t mem[] = { 0xff };
+    const IsaCase c = {
+        .name = "hd6309_oim",
+        .disas = "oim #$f0,<$20",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ NULL },
+        .load = (const IsaLoad[]){ { 0x0020, 0x0f } },
+        .n_load = 1,
+        .mem = (const IsaMem[]){ { 0x0020, mem, 1 } },
+        .n_mem = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
 static void test_hd6309_ldq(void)
 {
     static const uint8_t code[] = {
@@ -711,6 +902,22 @@ static void test_hd6309_ldq(void)
         .regs = (const char *const[]){
             "D=1122", "W=3344", "E=33", "F=44", NULL
         },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_lde(void)
+{
+    static const uint8_t code[] = {
+        0x11, 0x86, 0xab,       /* lde #$ab */
+    };
+    const IsaCase c = {
+        .name = "hd6309_lde",
+        .disas = "lde #$ab",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "E=ab", "F=00", "W=ab00", NULL },
     };
 
     hd6309_isa_run(&c);
@@ -787,6 +994,23 @@ static void test_hd6309_muld_divd(void)
     hd6309_isa_run(&c);
 }
 
+static void test_hd6309_divq(void)
+{
+    static const uint8_t code[] = {
+        0xcd, 0x00, 0x00, 0x00, 0x0a, /* ldq #$0000000a */
+        0x11, 0x8e, 0x00, 0x02,       /* divq #$0002 */
+    };
+    const IsaCase c = {
+        .name = "hd6309_divq",
+        .disas = "ldq #10; divq #2",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "D=0000", "W=0005", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
 static void test_hd6309_pshsw(void)
 {
     static const uint8_t code[] = {
@@ -803,6 +1027,26 @@ static void test_hd6309_pshsw(void)
         .regs = (const char *const[]){ "S=3ffe", "W=aabb", NULL },
         .mem = (const IsaMem[]){ { 0x3ffe, frame, sizeof(frame) } },
         .n_mem = 1,
+    };
+
+    hd6309_isa_run(&c);
+}
+
+static void test_hd6309_pulsw(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x10, 0x86, 0xaa, 0xbb, /* ldw #$aabb */
+        0x10, 0x38,             /* pshsw */
+        0x10, 0x86, 0x00, 0x00, /* ldw #$0000 */
+        0x10, 0x39,             /* pulsw */
+    };
+    const IsaCase c = {
+        .name = "hd6309_pulsw",
+        .disas = "lds #$4000; ldw #$aabb; pshsw; ldw #0; pulsw",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "S=4000", "W=aabb", NULL },
     };
 
     hd6309_isa_run(&c);
@@ -1077,19 +1321,38 @@ int main(int argc, char **argv)
 
     rom_path = write_stub_rom();
     qts = isa_vm_new("coco3", "tcg,one-insn-per-tb=on");
+    qts_hd6309 = isa_vm_cpu("hd6309");
     ran = false;
+    ran_hd6309 = false;
 
     for (i = 0; i < ARRAY_SIZE(isa_cases); i++) {
         char *path = g_strdup_printf("/isa/%s", isa_cases[i].name);
         qtest_add_data_func(path, &isa_cases[i], test_isa_case);
         g_free(path);
     }
+    for (i = 0; i < ARRAY_SIZE(isa_cases); i++) {
+        char *path;
+
+        /* 6309 8→16 TFR duplicates the byte; 6809 fills $FF. */
+        if (strcmp(isa_cases[i].name, "tfr_a_x") == 0) {
+            continue;
+        }
+        path = g_strdup_printf("/isa/hd6309_compat/%s", isa_cases[i].name);
+        qtest_add_data_func(path, &isa_cases[i], test_isa_case_hd6309);
+        g_free(path);
+    }
     qtest_add_func("/isa/invalid_indexed_87", test_invalid_indexed);
     qtest_add_func("/isa/hd6309_tfr_a_w", test_hd6309_tfr_a_w);
+    qtest_add_func("/isa/hd6309_tfr_a_x", test_hd6309_tfr_a_x);
+    qtest_add_func("/isa/hd6309_tfr_v", test_hd6309_tfr_v);
+    qtest_add_func("/isa/hd6309_tfr_e_f", test_hd6309_tfr_e_f);
+    qtest_add_func("/isa/hd6309_exg_d_w", test_hd6309_exg_d_w);
     qtest_add_func("/isa/hd6309_tfr_zero_x", test_hd6309_tfr_zero_x);
     qtest_add_func("/isa/m6809_tfr_zero_halts", test_m6809_tfr_zero_halts);
+    qtest_add_func("/isa/m6809_tfr_w_halts", test_m6809_tfr_w_halts);
     qtest_add_func("/isa/hd6309_index_e_x", test_hd6309_index_e_x);
     qtest_add_func("/isa/hd6309_index_w", test_hd6309_index_w);
+    qtest_add_func("/isa/m6809_index_w_halts", test_m6809_index_w_halts);
     qtest_add_func("/isa/hd6309_illegal_trap", test_hd6309_illegal_trap);
     qtest_add_func("/isa/hd6309_swi_emu", test_hd6309_swi_emu);
     qtest_add_func("/isa/hd6309_swi_native", test_hd6309_swi_native);
@@ -1099,13 +1362,18 @@ int main(int argc, char **argv)
     qtest_add_func("/isa/hd6309_firq_fm_emu", test_hd6309_firq_fm_emu);
     qtest_add_func("/isa/hd6309_firq_fm_native", test_hd6309_firq_fm_native);
     qtest_add_func("/isa/hd6309_ldmd_bitmd", test_hd6309_ldmd_bitmd);
+    qtest_add_func("/isa/hd6309_bitmd_clears", test_hd6309_bitmd_clears);
     qtest_add_func("/isa/hd6309_aim", test_hd6309_aim);
+    qtest_add_func("/isa/hd6309_oim", test_hd6309_oim);
     qtest_add_func("/isa/hd6309_ldq", test_hd6309_ldq);
+    qtest_add_func("/isa/hd6309_lde", test_hd6309_lde);
     qtest_add_func("/isa/hd6309_sexw", test_hd6309_sexw);
     qtest_add_func("/isa/hd6309_clrd", test_hd6309_clrd);
     qtest_add_func("/isa/hd6309_addr", test_hd6309_addr);
     qtest_add_func("/isa/hd6309_muld_divd", test_hd6309_muld_divd);
+    qtest_add_func("/isa/hd6309_divq", test_hd6309_divq);
     qtest_add_func("/isa/hd6309_pshsw", test_hd6309_pshsw);
+    qtest_add_func("/isa/hd6309_pulsw", test_hd6309_pulsw);
     qtest_add_func("/isa/hd6309_tfm", test_hd6309_tfm);
     qtest_add_func("/isa/hd6309_band", test_hd6309_band);
     qtest_add_func("/isa/hd6309_div0", test_hd6309_div0);
@@ -1119,6 +1387,7 @@ int main(int argc, char **argv)
     ret = g_test_run();
 
     qtest_quit(qts);
+    qtest_quit(qts_hd6309);
     unlink(rom_path);
     g_free(rom_path);
     return ret;
