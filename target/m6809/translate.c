@@ -402,6 +402,21 @@ static void gen_cmp16(TCGv_i32 dest, TCGv_i32 src)
     gen_sub16(dest, src, false);
 }
 
+static void gen_sub16_wb(TCGv_i32 dest, TCGv_i32 src)
+{
+    gen_sub16(dest, src, true);
+}
+
+static void gen_sbc16(TCGv_i32 dest, TCGv_i32 src)
+{
+    gen_sub16_common(dest, src, true, true);
+}
+
+static void gen_adc16(TCGv_i32 dest, TCGv_i32 src)
+{
+    gen_add16_common(dest, src, true);
+}
+
 typedef enum {
     M6809_LOGIC_AND,
     M6809_LOGIC_OR,
@@ -2789,6 +2804,238 @@ TRANS_6309_ST8(STE, cpu_e)
 TRANS_6309_LD8(LDF, cpu_f)
 TRANS_6309_ST8(STF, cpu_f)
 
+#define TRANS_6309_ALU8(name, dest, fn)                                 \
+static bool trans_##name##_imm(DisasContext *ctx, arg_##name##_imm *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_alu8_imm(dest, a->imm, fn);                               \
+}                                                                       \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_alu8_dir(dest, a->addr, fn);                              \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_alu8_idx(ctx, dest, fn);                                  \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    return do_alu8_ext(dest, a->addr, fn);                              \
+}
+
+/* E/F add: NZVC only (no H), matching ADDD rather than ADDA. */
+#define TRANS_6309_ADD8(name, dest)                                     \
+static bool trans_##name##_imm(DisasContext *ctx, arg_##name##_imm *a)  \
+{                                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    gen_add8_noh(dest, tcg_constant_i32(a->imm & 0xff), false);         \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    TCGv_i32 src;                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    src = tcg_temp_new_i32();                                           \
+    tcg_gen_qemu_ld_i32(src, gen_ea_direct(a->addr), 0, MO_UB);         \
+    gen_add8_noh(dest, src, false);                                     \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    TCGv_i32 ea;                                                        \
+    TCGv_i32 src;                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    src = tcg_temp_new_i32();                                           \
+    if (gen_ea_indexed(ctx, &ea)) {                                     \
+        tcg_gen_qemu_ld_i32(src, ea, 0, MO_UB);                         \
+        gen_add8_noh(dest, src, false);                                 \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    TCGv_i32 src;                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    src = tcg_temp_new_i32();                                           \
+    tcg_gen_qemu_ld_i32(src, tcg_constant_i32(a->addr & 0xffff), 0,     \
+                        MO_UB);                                         \
+    gen_add8_noh(dest, src, false);                                     \
+    return true;                                                        \
+}
+
+#define TRANS_6309_PAIR_ALU16(name, get, set, fn, writeback)            \
+static bool trans_##name##_imm(DisasContext *ctx, arg_##name##_imm *a)  \
+{                                                                       \
+    TCGv_i32 pair;                                                      \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    pair = tcg_temp_new_i32();                                          \
+    get(pair);                                                          \
+    fn(pair, tcg_constant_i32(a->imm & 0xffff));                        \
+    if (writeback) {                                                    \
+        set(pair);                                                      \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    TCGv_i32 pair;                                                      \
+    TCGv_i32 src;                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    pair = tcg_temp_new_i32();                                          \
+    src = tcg_temp_new_i32();                                           \
+    get(pair);                                                          \
+    gen_ld16_wrapped(src, gen_ea_direct(a->addr));                      \
+    fn(pair, src);                                                      \
+    if (writeback) {                                                    \
+        set(pair);                                                      \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    TCGv_i32 ea;                                                        \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    if (gen_ea_indexed(ctx, &ea)) {                                     \
+        TCGv_i32 pair = tcg_temp_new_i32();                             \
+        TCGv_i32 src = tcg_temp_new_i32();                              \
+        get(pair);                                                      \
+        gen_ld16_wrapped(src, ea);                                      \
+        fn(pair, src);                                                  \
+        if (writeback) {                                                \
+            set(pair);                                                  \
+        }                                                               \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    TCGv_i32 pair;                                                      \
+    TCGv_i32 src;                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    pair = tcg_temp_new_i32();                                          \
+    src = tcg_temp_new_i32();                                           \
+    get(pair);                                                          \
+    gen_ld16_wrapped(src, tcg_constant_i32(a->addr & 0xffff));          \
+    fn(pair, src);                                                      \
+    if (writeback) {                                                    \
+        set(pair);                                                      \
+    }                                                                   \
+    return true;                                                        \
+}
+
+#define TRANS_6309_PAIR_LOGIC16(name, get, set, op, writeback)           \
+static bool trans_##name##_imm(DisasContext *ctx, arg_##name##_imm *a)  \
+{                                                                       \
+    TCGv_i32 pair;                                                      \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    pair = tcg_temp_new_i32();                                          \
+    get(pair);                                                          \
+    gen_logic16(pair, tcg_constant_i32(a->imm & 0xffff), op, writeback); \
+    if (writeback) {                                                    \
+        set(pair);                                                      \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_dir(DisasContext *ctx, arg_##name##_dir *a)  \
+{                                                                       \
+    TCGv_i32 pair;                                                      \
+    TCGv_i32 src;                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    pair = tcg_temp_new_i32();                                          \
+    src = tcg_temp_new_i32();                                           \
+    get(pair);                                                          \
+    gen_ld16_wrapped(src, gen_ea_direct(a->addr));                      \
+    gen_logic16(pair, src, op, writeback);                              \
+    if (writeback) {                                                    \
+        set(pair);                                                      \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_idx(DisasContext *ctx, arg_##name##_idx *a)  \
+{                                                                       \
+    TCGv_i32 ea;                                                        \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    if (gen_ea_indexed(ctx, &ea)) {                                     \
+        TCGv_i32 pair = tcg_temp_new_i32();                             \
+        TCGv_i32 src = tcg_temp_new_i32();                              \
+        get(pair);                                                      \
+        gen_ld16_wrapped(src, ea);                                      \
+        gen_logic16(pair, src, op, writeback);                          \
+        if (writeback) {                                                \
+            set(pair);                                                  \
+        }                                                               \
+    }                                                                   \
+    return true;                                                        \
+}                                                                       \
+static bool trans_##name##_ext(DisasContext *ctx, arg_##name##_ext *a)  \
+{                                                                       \
+    TCGv_i32 pair;                                                      \
+    TCGv_i32 src;                                                       \
+    if (!require_6309(ctx)) {                                           \
+        return true;                                                    \
+    }                                                                   \
+    pair = tcg_temp_new_i32();                                          \
+    src = tcg_temp_new_i32();                                           \
+    get(pair);                                                          \
+    gen_ld16_wrapped(src, tcg_constant_i32(a->addr & 0xffff));          \
+    gen_logic16(pair, src, op, writeback);                              \
+    if (writeback) {                                                    \
+        set(pair);                                                      \
+    }                                                                   \
+    return true;                                                        \
+}
+
+TRANS_6309_ALU8(SUBE, cpu_e, gen_sub8)
+TRANS_6309_ALU8(CMPE, cpu_e, gen_cmp8)
+TRANS_6309_ADD8(ADDE, cpu_e)
+TRANS_6309_ALU8(SUBF, cpu_f, gen_sub8)
+TRANS_6309_ALU8(CMPF, cpu_f, gen_cmp8)
+TRANS_6309_ADD8(ADDF, cpu_f)
+
+TRANS_6309_PAIR_ALU16(SUBW, gen_get_w, gen_set_w, gen_sub16_wb, true)
+TRANS_6309_PAIR_ALU16(CMPW, gen_get_w, gen_set_w, gen_cmp16, false)
+TRANS_6309_PAIR_ALU16(ADDW, gen_get_w, gen_set_w, gen_add16, true)
+TRANS_6309_PAIR_ALU16(SBCD, gen_get_d, gen_set_d, gen_sbc16, true)
+TRANS_6309_PAIR_ALU16(ADCD, gen_get_d, gen_set_d, gen_adc16, true)
+
+TRANS_6309_PAIR_LOGIC16(ANDD, gen_get_d, gen_set_d, M6809_LOGIC_AND, true)
+TRANS_6309_PAIR_LOGIC16(BITD, gen_get_d, gen_set_d, M6809_LOGIC_AND, false)
+TRANS_6309_PAIR_LOGIC16(EORD, gen_get_d, gen_set_d, M6809_LOGIC_EOR, true)
+TRANS_6309_PAIR_LOGIC16(ORD, gen_get_d, gen_set_d, M6809_LOGIC_OR, true)
+
 static bool trans_LDW_imm(DisasContext *ctx, arg_LDW_imm *a)
 {
     TCGv_i32 w;
@@ -3615,6 +3862,8 @@ static bool do_bitop(DisasContext *ctx, int op, int post, int addr)
                      tcg_constant_i32(addr & 0xff));
     if (((post >> 6) & 3) == 0) {
         gen_exit_after_cc_write(ctx);
+    } else {
+        ctx->base.is_jmp = DISAS_TOO_MANY;
     }
     return true;
 }
@@ -3667,6 +3916,7 @@ static bool do_tfm(DisasContext *ctx, int variant, int post)
     tcg_gen_movi_i32(cpu_pc, ctx->base.pc_next & 0xffff);
     gen_helper_tfm(tcg_env, tcg_constant_i32(variant),
                    tcg_constant_i32(post & 0xff));
+    ctx->base.is_jmp = DISAS_TOO_MANY;
     return true;
 }
 

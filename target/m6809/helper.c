@@ -69,6 +69,15 @@ G_NORETURN void helper_raise_illegal_instruction(CPUM6809State *env)
     CPUState *cs = env_cpu(env);
 
     if (m6809_feature(env, M6809_FEATURE_6309)) {
+        uint8_t b0, b1, b2;
+
+        cs->neg.can_do_io = true;
+        b0 = cpu_ldub_data(env, env->pc);
+        b1 = cpu_ldub_data(env, (env->pc + 1) & 0xffff);
+        b2 = cpu_ldub_data(env, (env->pc + 2) & 0xffff);
+        qemu_log_mask(LOG_UNIMP,
+                      "m6809: 6309 illegal at PC=%04x bytes %02x %02x %02x\n",
+                      env->pc, b0, b1, b2);
         env->md |= MD_IL;
         cs->exception_index = EXCP_ILLEGAL;
         cpu_loop_exit(cs);
@@ -90,16 +99,16 @@ G_NORETURN void helper_raise_division_by_zero(CPUM6809State *env)
     cpu_loop_exit(cs);
 }
 
-static void m6809_push8(CPUM6809State *env, uint32_t val)
+static void m6809_push8(CPUM6809State *env, uint32_t val, uintptr_t ra)
 {
     env->s = (env->s - 1) & 0xffff;
-    cpu_stb_mmuidx_ra(env, env->s, val & 0xff, 0, 0);
+    cpu_stb_mmuidx_ra(env, env->s, val & 0xff, 0, ra);
 }
 
-static void m6809_push16(CPUM6809State *env, uint32_t val)
+static void m6809_push16(CPUM6809State *env, uint32_t val, uintptr_t ra)
 {
-    m6809_push8(env, val);
-    m6809_push8(env, val >> 8);
+    m6809_push8(env, val, ra);
+    m6809_push8(env, val >> 8, ra);
 }
 
 /*
@@ -113,21 +122,22 @@ static void m6809_push16(CPUM6809State *env, uint32_t val)
  * CC must already carry the E bit that says which of the two was used,
  * since that is what RTI reads back to size the frame.
  */
-static void m6809_stack_interrupt_frame(CPUM6809State *env, bool full_frame)
+static void m6809_stack_interrupt_frame(CPUM6809State *env, bool full_frame,
+                                        uintptr_t ra)
 {
-    m6809_push16(env, env->pc);
+    m6809_push16(env, env->pc, ra);
     if (full_frame) {
-        m6809_push16(env, env->u);
-        m6809_push16(env, env->y);
-        m6809_push16(env, env->x);
-        m6809_push8(env, env->dp);
+        m6809_push16(env, env->u, ra);
+        m6809_push16(env, env->y, ra);
+        m6809_push16(env, env->x, ra);
+        m6809_push8(env, env->dp, ra);
         if (m6809_native_stack(env)) {
-            m6809_push16(env, m6809_get_w(env));
+            m6809_push16(env, m6809_get_w(env), ra);
         }
-        m6809_push8(env, env->b);
-        m6809_push8(env, env->a);
+        m6809_push8(env, env->b, ra);
+        m6809_push8(env, env->a, ra);
     }
-    m6809_push8(env, env->cc);
+    m6809_push8(env, env->cc, ra);
 }
 
 void m6809_cpu_do_interrupt(CPUState *cs)
@@ -164,6 +174,8 @@ void m6809_cpu_do_interrupt(CPUState *cs)
         g_assert_not_reached();
     }
 
+    cs->neg.can_do_io = true;
+
     /* CWAI already pushed the frame. */
     if (env->wait_state != M6809_WAIT_CWAI) {
         if (full_frame) {
@@ -171,7 +183,7 @@ void m6809_cpu_do_interrupt(CPUState *cs)
         } else {
             env->cc &= ~CC_E;
         }
-        m6809_stack_interrupt_frame(env, full_frame);
+        m6809_stack_interrupt_frame(env, full_frame, 0);
     }
 
     env->wait_state = M6809_WAIT_NONE;
@@ -221,7 +233,7 @@ G_NORETURN void helper_cwai(CPUM6809State *env, uint32_t imm)
 
     env->cc &= imm & 0xff;
     env->cc |= CC_E;
-    m6809_stack_interrupt_frame(env, true);
+    m6809_stack_interrupt_frame(env, true, GETPC());
 
     env->wait_state = M6809_WAIT_CWAI;
     cs->halted = 1;
@@ -381,13 +393,16 @@ static void tfm_set_reg(CPUM6809State *env, int r, uint16_t val)
 }
 
 /*
- * TFM is not interruptible; W is the count and addresses wrap at $FFFF.
+ * W is the count and addresses wrap at $FFFF.
+ * TFM specification is interruptable, but since a copy of the maximum count is only a
+ * few microseconds using TCG, we won't bother with it.
  */
 void helper_tfm(CPUM6809State *env, uint32_t variant, uint32_t post)
 {
     int src = (post >> 4) & 0xf;
     int dst = post & 0xf;
     uint16_t count;
+    uintptr_t ra = GETPC();
 
     if (src > 4 || dst > 4) {
         helper_raise_illegal_instruction(env);
@@ -397,9 +412,9 @@ void helper_tfm(CPUM6809State *env, uint32_t variant, uint32_t post)
     while (count) {
         uint16_t sa = tfm_get_reg(env, src);
         uint16_t da = tfm_get_reg(env, dst);
-        uint8_t b = cpu_ldub_mmuidx_ra(env, sa, 0, 0);
+        uint8_t b = cpu_ldub_mmuidx_ra(env, sa, 0, ra);
 
-        cpu_stb_mmuidx_ra(env, da, b, 0, 0);
+        cpu_stb_mmuidx_ra(env, da, b, 0, ra);
         switch (variant) {
         case 0:
             sa++;
@@ -451,13 +466,14 @@ void helper_bitop(CPUM6809State *env, uint32_t op, uint32_t post, uint32_t addr)
     bool src;
     bool dst;
     bool result;
+    uintptr_t ra = GETPC();
 
     if (!reg) {
         helper_raise_illegal_instruction(env);
     }
 
     addr = ((env->dp << 8) | (addr & 0xff)) & 0xffff;
-    mem = cpu_ldub_mmuidx_ra(env, addr, 0, 0);
+    mem = cpu_ldub_mmuidx_ra(env, addr, 0, ra);
 
     if (op == 7) {
         /* STBT: register bit_hi -> memory bit_lo */
@@ -465,7 +481,7 @@ void helper_bitop(CPUM6809State *env, uint32_t op, uint32_t post, uint32_t addr)
         mem_bit = bit_lo;
         src = (*reg >> reg_bit) & 1;
         mem = (mem & ~(1u << mem_bit)) | ((uint8_t)src << mem_bit);
-        cpu_stb_mmuidx_ra(env, addr, mem, 0, 0);
+        cpu_stb_mmuidx_ra(env, addr, mem, 0, ra);
         return;
     }
 

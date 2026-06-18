@@ -923,6 +923,82 @@ static void test_hd6309_lde(void)
     hd6309_isa_run(&c);
 }
 
+/* lde #$50; cmpe #$50 — Z set, E unchanged. Reset CC is I|F. */
+static void test_hd6309_cmpe(void)
+{
+    static const uint8_t code[] = {
+        0x11, 0x86, 0x50,       /* lde #$50 */
+        0x11, 0x81, 0x50,       /* cmpe #$50 */
+    };
+    const IsaCase c = {
+        .name = "hd6309_cmpe",
+        .disas = "lde #$50; cmpe #$50",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "E=50", "CC=54", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* Krn uses CMPE indexed ($11A1). */
+static void test_hd6309_cmpe_idx(void)
+{
+    static const uint8_t code[] = {
+        0x11, 0x86, 0x99,       /* lde #$99 */
+        0x8e, 0x80, 0xf0,       /* ldx #$80f0 */
+        0x11, 0xa1, 0x84,       /* cmpe ,x */
+    };
+    static const uint8_t operand[] = { 0x99 };
+    const IsaCase c = {
+        .name = "hd6309_cmpe_idx",
+        .disas = "lde #$99; ldx #$80f0; cmpe ,x",
+        .code = code,
+        .code_len = sizeof(code),
+        .operand = operand,
+        .operand_len = sizeof(operand),
+        .regs = (const char *const[]){ "E=99", "X=80f0", "CC=54", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* ldd #$ffff; andd #$0f0f */
+static void test_hd6309_andd(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0xff, 0xff,       /* ldd #$ffff */
+        0x10, 0x84, 0x0f, 0x0f, /* andd #$0f0f */
+    };
+    const IsaCase c = {
+        .name = "hd6309_andd",
+        .disas = "ldd #$ffff; andd #$0f0f",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "D=0f0f", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
+/* ldw #$0001; addw #$0002 */
+static void test_hd6309_addw(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x86, 0x00, 0x01, /* ldw #$0001 */
+        0x10, 0x8b, 0x00, 0x02, /* addw #$0002 */
+    };
+    const IsaCase c = {
+        .name = "hd6309_addw",
+        .disas = "ldw #$0001; addw #$0002",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "W=0003", "E=00", "F=03", NULL },
+    };
+
+    hd6309_isa_run(&c);
+}
+
 static void test_hd6309_sexw(void)
 {
     static const uint8_t code[] = {
@@ -1367,6 +1443,10 @@ int main(int argc, char **argv)
     qtest_add_func("/isa/hd6309_oim", test_hd6309_oim);
     qtest_add_func("/isa/hd6309_ldq", test_hd6309_ldq);
     qtest_add_func("/isa/hd6309_lde", test_hd6309_lde);
+    qtest_add_func("/isa/hd6309_cmpe", test_hd6309_cmpe);
+    qtest_add_func("/isa/hd6309_cmpe_idx", test_hd6309_cmpe_idx);
+    qtest_add_func("/isa/hd6309_andd", test_hd6309_andd);
+    qtest_add_func("/isa/hd6309_addw", test_hd6309_addw);
     qtest_add_func("/isa/hd6309_sexw", test_hd6309_sexw);
     qtest_add_func("/isa/hd6309_clrd", test_hd6309_clrd);
     qtest_add_func("/isa/hd6309_addr", test_hd6309_addr);
