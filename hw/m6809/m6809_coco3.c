@@ -112,7 +112,7 @@ static void coco3_machine_class_init(ObjectClass *oc, const void *data)
     mc->no_floppy = 1;
     mc->no_cdrom = 1;
     mc->no_parallel = 1;
-    /* First -drive (if=none, or default) is the virt disk at $FF30. */
+    /* -drive index 0 is /F0, index 1 is /DD, both at $FF30. */
     mc->block_default_type = IF_NONE;
 }
 

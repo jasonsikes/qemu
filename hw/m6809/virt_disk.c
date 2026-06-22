@@ -1,5 +1,6 @@
 /*
  * CoCo 3 virt disk
+ * Unit 0 is /F0, unit 1 is /DD.
  *
  * Copyright (c) 2026 Jason G. Sikes
  *
@@ -72,16 +73,18 @@ static void coco3_virt_disk_run(Coco3VirtDiskState *s)
     uint32_t lsn;
     uint16_t buf;
     int64_t offset, len;
+    BlockBackend *blk;
     bool writing;
 
     s->stat = 0;
 
-    if (!s->blk) {
-        s->stat = OS9_E_NOTRDY;
+    if (s->drv >= COCO3_VDISK_UNITS) {
+        s->stat = OS9_E_UNIT;
         return;
     }
-    if (s->drv != 0) {
-        s->stat = OS9_E_UNIT;
+    blk = s->blk[s->drv];
+    if (!blk) {
+        s->stat = OS9_E_NOTRDY;
         return;
     }
     if (s->cmd != VDISK_CMD_READ && s->cmd != VDISK_CMD_WRITE) {
@@ -92,7 +95,7 @@ static void coco3_virt_disk_run(Coco3VirtDiskState *s)
     }
 
     writing = s->cmd == VDISK_CMD_WRITE;
-    if (writing && !blk_is_writable(s->blk)) {
+    if (writing && !blk_is_writable(blk)) {
         s->stat = OS9_E_WP;
         return;
     }
@@ -100,7 +103,7 @@ static void coco3_virt_disk_run(Coco3VirtDiskState *s)
     lsn = ((uint32_t)s->lsn[0] << 16) | ((uint32_t)s->lsn[1] << 8) | s->lsn[2];
     buf = ((uint16_t)s->buf[0] << 8) | s->buf[1];
     offset = (int64_t)lsn * VDISK_SECTOR;
-    len = blk_getlength(s->blk);
+    len = blk_getlength(blk);
     if (len < 0) {
         s->stat = OS9_E_NOTRDY;
         return;
@@ -115,11 +118,11 @@ static void coco3_virt_disk_run(Coco3VirtDiskState *s)
             s->stat = OS9_E_WRITE;
             return;
         }
-        if (blk_pwrite(s->blk, offset, VDISK_SECTOR, sector, 0) < 0) {
+        if (blk_pwrite(blk, offset, VDISK_SECTOR, sector, 0) < 0) {
             s->stat = OS9_E_WRITE;
         }
     } else {
-        if (blk_pread(s->blk, offset, VDISK_SECTOR, sector, 0) < 0) {
+        if (blk_pread(blk, offset, VDISK_SECTOR, sector, 0) < 0) {
             s->stat = OS9_E_READ;
             return;
         }
@@ -209,15 +212,17 @@ static void coco3_virt_disk_realize(DeviceState *dev, Error **errp)
 {
     Coco3VirtDiskState *s = COCO3_VIRT_DISK(dev);
     uint64_t perm;
+    int i;
 
-    if (!s->blk) {
-        return;
-    }
-
-    perm = BLK_PERM_CONSISTENT_READ |
-           (blk_supports_write_perm(s->blk) ? BLK_PERM_WRITE : 0);
-    if (blk_set_perm(s->blk, perm, BLK_PERM_ALL, errp) < 0) {
-        return;
+    for (i = 0; i < COCO3_VDISK_UNITS; i++) {
+        if (!s->blk[i]) {
+            continue;
+        }
+        perm = BLK_PERM_CONSISTENT_READ |
+               (blk_supports_write_perm(s->blk[i]) ? BLK_PERM_WRITE : 0);
+        if (blk_set_perm(s->blk[i], perm, BLK_PERM_ALL, errp) < 0) {
+            return;
+        }
     }
 }
 
@@ -246,7 +251,8 @@ static const VMStateDescription vmstate_coco3_virt_disk = {
 };
 
 static const Property coco3_virt_disk_properties[] = {
-    DEFINE_PROP_DRIVE("drive", Coco3VirtDiskState, blk),
+    DEFINE_PROP_DRIVE("drive", Coco3VirtDiskState, blk[0]),
+    DEFINE_PROP_DRIVE("drive1", Coco3VirtDiskState, blk[1]),
 };
 
 static void coco3_virt_disk_class_init(ObjectClass *oc, const void *data)

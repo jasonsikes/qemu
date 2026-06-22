@@ -20,7 +20,8 @@ The ``coco3`` machine includes:
   ``joydrv_6552M``). Host pointer motion is relative; Rx full raises
   GIME CART (``$FF92`` bit 0).
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
-- Virt disk at ``$FF30`` (first ``-drive``)
+- Virt disk at ``$FF30`` (``-drive`` index 0 is NitrOS-9 ``/F0``,
+  index 1 is ``/DD``)
 - Virt RTC at ``$FF50`` (host time; ``-rtc``; NitrOS-9 ``Clock2``)
 - Graphic console: 640×480 window (240-line NTSC raster, each scanline
   doubled). GIME graphics (2/4/16 color at
@@ -34,11 +35,22 @@ The ``coco3`` machine includes:
 ``-kernel`` loads a boot track at ``$2600`` and starts at ``$2602``.
 ``-bios`` loads a 32 KiB ROM. The two options cannot be used together.
 
-The first ``-drive`` is the virt disk. ``-serial`` is ``/T0``.
+The first ``-drive`` is ``/F0``. The second is ``/DD`` (Boot loads
+OS9Boot from this unit). ``-serial`` is ``/T0``.
 The virt RTC follows ``-rtc`` (default ``base=utc``).
 
 .. code-block:: bash
 
    qemu-system-m6809 -M coco3 \
        -kernel build/os9/boottrack.bin \
+       -drive if=none,index=1,file=build/os9/qemu.raw,format=raw
+
+Add a floppy as the first ``-drive`` (NitrOS-9 ``/F0``), with the hard
+disk still second:
+
+.. code-block:: bash
+
+   qemu-system-m6809 -M coco3 \
+       -kernel build/os9/boottrack.bin \
+       -drive file=floppy.dsk,format=raw \
        -drive file=build/os9/qemu.raw,format=raw

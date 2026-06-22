@@ -891,11 +891,17 @@ static void coco3_realize(DeviceState *dev, Error **errp)
     object_initialize_child(OBJECT(dev), "virt-disk", &s->vdisk,
                             TYPE_COCO3_VIRT_DISK);
     {
-        DriveInfo *dinfo = drive_get(IF_NONE, 0, 0);
+        static const char *const props[COCO3_VDISK_UNITS] = {
+            "drive", "drive1",
+        };
+        DriveInfo *dinfo;
 
-        if (dinfo) {
-            qdev_prop_set_drive(DEVICE(&s->vdisk), "drive",
-                                blk_by_legacy_dinfo(dinfo));
+        for (i = 0; i < COCO3_VDISK_UNITS; i++) {
+            dinfo = drive_get(IF_NONE, 0, i);
+            if (dinfo) {
+                qdev_prop_set_drive(DEVICE(&s->vdisk), props[i],
+                                    blk_by_legacy_dinfo(dinfo));
+            }
         }
     }
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->vdisk), errp)) {

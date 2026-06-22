@@ -192,17 +192,55 @@ class Coco3MachineTest(QemuSystemTest):
                 mem=((0x2000, (0x4f, 0x53)), (0x20ff, (0xee,))),
             )
 
-        with self.subTest('vdisk_unit'):
+        with self.subTest('vdisk_not_ready'):
             run_bios_case(self,
-                'vdisk_unit',
+                'vdisk_not_ready',
                 # lda #1; sta Q.DRV; LSN=0; sty Q.BUF #$2000; Q.CMD read; lda Q.STAT
                 b'\x86\x01\xb7\xff\x34'
                 b'\x7f\xff\x35'
                 b'\xcc\x00\x00\xfd\xff\x36'
                 b'\x10\x8e\x20\x00\x10\xbf\xff\x38'
                 b'\x86\x01\xb7\xff\x32\xb6\xff\x33',
+                {'A': 'f6'},
+                extra=drive,
+            )
+
+        with self.subTest('vdisk_unit'):
+            run_bios_case(self,
+                'vdisk_unit',
+                # lda #2; sta Q.DRV; LSN=0; sty Q.BUF #$2000; Q.CMD read; lda Q.STAT
+                b'\x86\x02\xb7\xff\x34'
+                b'\x7f\xff\x35'
+                b'\xcc\x00\x00\xfd\xff\x36'
+                b'\x10\x8e\x20\x00\x10\xbf\xff\x38'
+                b'\x86\x01\xb7\xff\x32\xb6\xff\x33',
                 {'A': 'f1'},
                 extra=drive,
+            )
+
+        image1 = bytearray(512)
+        image1[0:2] = b'DD'
+        image1[255] = 0xdd
+        image1_path = self.scratch_file('vdisk1.img')
+        with open(image1_path, 'wb') as stream:
+            stream.write(image1)
+        drives = (
+            '-drive', f'if=none,file={image_path},format=raw',
+            '-drive', f'if=none,file={image1_path},format=raw',
+        )
+
+        with self.subTest('vdisk_drive1'):
+            run_bios_case(self,
+                'vdisk_drive1',
+                # lda #1; sta Q.DRV; LSN=0; sty Q.BUF #$2000; Q.CMD read; lda Q.STAT
+                b'\x86\x01\xb7\xff\x34'
+                b'\x7f\xff\x35'
+                b'\xcc\x00\x00\xfd\xff\x36'
+                b'\x10\x8e\x20\x00\x10\xbf\xff\x38'
+                b'\x86\x01\xb7\xff\x32\xb6\xff\x33',
+                {'A': '00'},
+                extra=drives,
+                mem=((0x2000, (0x44, 0x44)), (0x20ff, (0xdd,))),
             )
 
         with self.subTest('vdisk_write'):
