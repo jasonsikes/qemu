@@ -38,12 +38,13 @@ loads track 34 from that image the same way Disk BASIC ``DOS`` does.
 ``-bios`` loads a 32 KiB ROM. ``-bios`` and ``-kernel`` cannot be used
 together.
 
-The first ``-drive`` is ``/F0`` (boot floppy). The second is ``/DD``
-(Boot loads OS9Boot from this unit). ``-serial`` is ``/T0``.
+The first ``-drive`` is ``/F0`` (boot floppy; Boot loads OS9Boot from
+this unit, and ``/startup`` lives here). The second is ``/DD`` (stock
+EOU VHD). ``-serial`` is ``/T0``.
 The virt RTC follows ``-rtc`` (default ``base=utc``).
 
 .. code-block:: bash
 
    qemu-system-m6809 -M coco3 \
        -drive file=build/os9/floppy.dsk,format=raw \
-       -drive file=build/os9/qemu.raw,format=raw
+       -drive file=68SDC.VHD,format=raw
