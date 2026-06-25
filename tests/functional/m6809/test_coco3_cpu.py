@@ -159,6 +159,31 @@ class Coco3MachineTest(QemuSystemTest):
         finally:
             vm.shutdown()
 
+    def test_os9_dos_boot(self):
+        img = bytearray(40 * 18 * 256)
+        off = 34 * 18 * 256
+        img[off:off + 4] = b'OS\x20\xfe'  # fcc /OS/; bra *
+        path = self.scratch_file('dos.dsk')
+        with open(path, 'wb') as stream:
+            stream.write(img)
+
+        vm = self.get_vm(name='dos_boot')
+        vm.add_args('-drive', f'if=none,file={path},format=raw',
+                    '-display', 'none',
+                    '-accel', 'tcg,one-insn-per-tb=on')
+        vm.launch()
+        try:
+            try:
+                wait_info_registers(vm, 'PC=2602', timeout=self.timeout)
+            except TimeoutError as err:
+                self.fail(f'dos_boot: timed out\n{err}')
+            dump = vm.cmd('human-monitor-command',
+                          command_line='x/4xb 0x2600')
+            self.assertEqual([0x4f, 0x53, 0x20, 0xfe], mem_bytes(dump),
+                             f'dos_boot: memory at 0x2600\n{dump}')
+        finally:
+            vm.shutdown()
+
     def test_virt_disk(self):
         with self.subTest('vdisk_probe'):
             run_bios_case(self,

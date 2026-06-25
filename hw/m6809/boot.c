@@ -13,6 +13,7 @@
 #include "system/memory.h"
 #include "system/physmem.h"
 #include "system/reset.h"
+#include "system/block-backend.h"
 #include "hw/core/loader.h"
 #include "boot.h"
 #include "qemu/error-report.h"
@@ -43,12 +44,11 @@ bool m6809_load_firmware(MemoryRegion *program_mr, const char *firmware)
     return true;
 }
 
-bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
-                          const char *filename)
+static bool m6809_install_boottrack(M6809CPU *cpu, MemoryRegion *ram,
+                                    hwaddr ram_offset, const uint8_t *data,
+                                    size_t len, const char *what)
 {
-    g_autofree char *data = NULL;
-    gsize len, i;
-    g_autoptr(GError) gerr = NULL;
+    size_t i;
     uint8_t *ram_ptr;
     static const uint8_t coco3_vectors[] = {
         0xfe, 0xee, /* $FFEE DIV0 */
@@ -63,26 +63,22 @@ bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
         OS9_BOOTTRACK_ENTRY & 0xff, /* $FFFE RESET */
     };
 
-    if (!g_file_get_contents(filename, &data, &len, &gerr)) {
-        error_report("coco3: could not read boot track '%s': %s",
-                     filename, gerr->message);
-        return false;
-    }
     if (len == 0) {
-        error_report("coco3: boot track '%s' is empty", filename);
+        error_report("coco3: %s is empty", what);
         return false;
     }
     if (len > OS9_BOOTTRACK_SIZE) {
-        error_report("coco3: '%s' is %zu bytes; max is %d",
-                     filename, (size_t)len, OS9_BOOTTRACK_SIZE);
+        error_report("coco3: %s is %zu bytes; max is %d",
+                     what, len, OS9_BOOTTRACK_SIZE);
         return false;
     }
     if (len != OS9_BOOTTRACK_SIZE) {
-        warn_report("coco3: '%s' is %zu bytes; expected %d",
-                    filename, (size_t)len, OS9_BOOTTRACK_SIZE);
+        warn_report("coco3: %s is %zu bytes; expected %d",
+                    what, len, OS9_BOOTTRACK_SIZE);
     }
     if (len >= 2 && (data[0] != 'O' || data[1] != 'S')) {
-        warn_report("coco3: boot track does not start with 'OS'");
+        error_report("coco3: %s does not start with 'OS'", what);
+        return false;
     }
     if (ram_offset + len > memory_region_size(ram)) {
         error_report("coco3: boot track does not fit in RAM");
@@ -99,4 +95,48 @@ bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
     cpu_set_pc(CPU(cpu), OS9_BOOTTRACK_ENTRY);
     qemu_register_reset(m6809_boottrack_reset, cpu);
     return true;
+}
+
+bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
+                          const char *filename)
+{
+    g_autofree char *data = NULL;
+    gsize len;
+    g_autoptr(GError) gerr = NULL;
+
+    if (!g_file_get_contents(filename, &data, &len, &gerr)) {
+        error_report("coco3: could not read boot track '%s': %s",
+                     filename, gerr->message);
+        return false;
+    }
+    return m6809_install_boottrack(cpu, ram, ram_offset,
+                                   (const uint8_t *)data, len, filename);
+}
+
+bool m6809_load_dos_boottrack(M6809CPU *cpu, MemoryRegion *ram,
+                              hwaddr ram_offset, BlockBackend *blk)
+{
+    uint8_t buf[OS9_BOOTTRACK_SIZE];
+    int64_t off = (int64_t)COCO3_DOS_LSN * COCO3_SECTOR_SIZE;
+    int64_t disk_len;
+
+    if (!blk) {
+        error_report("coco3: DOS boot needs a floppy on the first -drive");
+        return false;
+    }
+    disk_len = blk_getlength(blk);
+    if (disk_len < 0) {
+        error_report("coco3: could not size the floppy for DOS boot");
+        return false;
+    }
+    if (disk_len < off + OS9_BOOTTRACK_SIZE) {
+        error_report("coco3: floppy is too small for track 34 (DOS boot)");
+        return false;
+    }
+    if (blk_pread(blk, off, OS9_BOOTTRACK_SIZE, buf, 0) < 0) {
+        error_report("coco3: failed to read track 34 for DOS boot");
+        return false;
+    }
+    return m6809_install_boottrack(cpu, ram, ram_offset, buf,
+                                   OS9_BOOTTRACK_SIZE, "DOS track 34");
 }

@@ -14,14 +14,23 @@
 #include "system/memory.h"
 #include "target/m6809/cpu.h"
 
-/* -kernel load address, size, and entry. */
+typedef struct BlockBackend BlockBackend;
+
+/* -kernel load address, size, and entry. Disk BASIC DOS copies track 34
+ * (18×256-byte sectors) here and jumps to the entry. */
 #define OS9_BOOTTRACK_ADDR   0x2600
 #define OS9_BOOTTRACK_SIZE   0x1200
 #define OS9_BOOTTRACK_ENTRY  0x2602
 #define COCO3_VEC_TABLE      0xffee
+#define COCO3_DOS_TRACK      34
+#define COCO3_SECS_PER_TRACK 18
+#define COCO3_SECTOR_SIZE    256
+#define COCO3_DOS_LSN        (COCO3_DOS_TRACK * COCO3_SECS_PER_TRACK)
 
 bool m6809_load_firmware(MemoryRegion *mr, const char *firmware);
 bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
                           const char *filename);
+bool m6809_load_dos_boottrack(M6809CPU *cpu, MemoryRegion *ram,
+                              hwaddr ram_offset, BlockBackend *blk);
 
 #endif /* HW_M6809_BOOT_H */

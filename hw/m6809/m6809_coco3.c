@@ -16,6 +16,7 @@
 #include "qom/object.h"
 #include "hw/core/boards.h"
 #include "hw/core/sysbus.h"
+#include "system/blockdev.h"
 
 struct Coco3MachineState {
     MachineState parent_obj;
@@ -46,7 +47,8 @@ static void coco3_machine_init(MachineState *machine)
     object_property_set_bool(OBJECT(&s->sys), "fake-cart-firq",
                              s->fake_cart_firq, &error_abort);
     /* REL needs MMUEN on at reset; set before realize. */
-    if (machine->kernel_filename) {
+    if (machine->kernel_filename ||
+        (!machine->firmware && drive_get(IF_NONE, 0, 0))) {
         object_property_set_bool(OBJECT(&s->sys), "os9-kernel",
                                  true, &error_abort);
     }
@@ -70,6 +72,15 @@ static void coco3_machine_init(MachineState *machine)
                   OS9_BOOTTRACK_ADDR;
         if (!m6809_load_boottrack(&s->sys.cpu, machine->ram, ram_off,
                                   machine->kernel_filename)) {
+            exit(1);
+        }
+    } else if (!machine->firmware && s->sys.vdisk.blk[0]) {
+        hwaddr ram_off;
+
+        ram_off = (hwaddr)GIME_RESET_BASE_BLOCK * GIME_PAGE_SIZE +
+                  OS9_BOOTTRACK_ADDR;
+        if (!m6809_load_dos_boottrack(&s->sys.cpu, machine->ram, ram_off,
+                                      s->sys.vdisk.blk[0])) {
             exit(1);
         }
     }
@@ -112,7 +123,7 @@ static void coco3_machine_class_init(ObjectClass *oc, const void *data)
     mc->no_floppy = 1;
     mc->no_cdrom = 1;
     mc->no_parallel = 1;
-    /* -drive index 0 is /F0, index 1 is /DD, both at $FF30. */
+    /* First -drive is /F0 (DOS loads track 34). Index 1 is /DD. */
     mc->block_default_type = IF_NONE;
 }
 

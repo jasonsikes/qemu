@@ -33,24 +33,17 @@ The ``coco3`` machine includes:
 - 60 Hz GIME vertical border interrupt
 
 ``-kernel`` loads a boot track at ``$2600`` and starts at ``$2602``.
-``-bios`` loads a 32 KiB ROM. The two options cannot be used together.
+With no ``-kernel`` and a floppy on the first ``-drive``, the machine
+loads track 34 from that image the same way Disk BASIC ``DOS`` does.
+``-bios`` loads a 32 KiB ROM. ``-bios`` and ``-kernel`` cannot be used
+together.
 
-The first ``-drive`` is ``/F0``. The second is ``/DD`` (Boot loads
-OS9Boot from this unit). ``-serial`` is ``/T0``.
+The first ``-drive`` is ``/F0`` (boot floppy). The second is ``/DD``
+(Boot loads OS9Boot from this unit). ``-serial`` is ``/T0``.
 The virt RTC follows ``-rtc`` (default ``base=utc``).
 
 .. code-block:: bash
 
    qemu-system-m6809 -M coco3 \
-       -kernel build/os9/boottrack.bin \
-       -drive if=none,index=1,file=build/os9/qemu.raw,format=raw
-
-Add a floppy as the first ``-drive`` (NitrOS-9 ``/F0``), with the hard
-disk still second:
-
-.. code-block:: bash
-
-   qemu-system-m6809 -M coco3 \
-       -kernel build/os9/boottrack.bin \
-       -drive file=floppy.dsk,format=raw \
+       -drive file=build/os9/floppy.dsk,format=raw \
        -drive file=build/os9/qemu.raw,format=raw
