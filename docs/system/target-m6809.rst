@@ -20,7 +20,7 @@ The ``coco3`` machine includes:
   ``joydrv_6552M``). Host pointer motion is relative; Rx full raises
   GIME CART (``$FF92`` bit 0).
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
-- Virt disk at ``$FF30`` (``-drive`` index 0 is NitrOS-9 ``/F0``,
+- Virt disk at ``$FF30`` (``-drive`` index 0 is NitrOS-9 ``/D0``,
   index 1 is ``/DD``)
 - Virt RTC at ``$FF50`` (host time; ``-rtc``; NitrOS-9 ``Clock2``)
 - Graphic console: 640×480 window (240-line NTSC raster, each scanline
@@ -38,7 +38,7 @@ loads track 34 from that image the same way Disk BASIC ``DOS`` does.
 ``-bios`` loads a 32 KiB ROM. ``-bios`` and ``-kernel`` cannot be used
 together.
 
-The first ``-drive`` is ``/F0`` (boot floppy; Boot loads OS9Boot from
+The first ``-drive`` is ``/D0`` (boot floppy; Boot loads OS9Boot from
 this unit, and ``/startup`` lives here). The second is ``/DD`` (stock
 EOU VHD). ``-serial`` is ``/T0``.
 The virt RTC follows ``-rtc`` (default ``base=utc``).

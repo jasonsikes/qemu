@@ -21,7 +21,7 @@ DECLARE_INSTANCE_CHECKER(Coco3VirtDiskState, COCO3_VIRT_DISK,
                          TYPE_COCO3_VIRT_DISK)
 
 #define COCO3_VDISK_IO_SIZE 0x10
-#define COCO3_VDISK_UNITS   2 /* 0=/F0, 1=/DD */
+#define COCO3_VDISK_UNITS   2 /* 0=/D0, 1=/DD */
 
 struct Coco3VirtDiskState {
     /*< private >*/

@@ -217,7 +217,7 @@ static void coco3_gime_reset(Coco3State *s)
 
     /*
      * -bios: VDG-compat like silicon so Color BASIC can paint $0400.
-     * -kernel / DOS from /F0: MMUEN; NitrOS-9 reprograms the GIME itself.
+     * -kernel / DOS from /D0: MMUEN; NitrOS-9 reprograms the GIME itself.
      */
     s->init0 = s->os9_kernel ? GIME_INIT0_MMUEN : GIME_INIT0_COCO;
     s->init1 = 0;

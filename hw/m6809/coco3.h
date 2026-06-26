@@ -135,7 +135,7 @@ struct Coco3State {
     bool sam_ty;                /* SAM TY: RAM at $3C-$3F */
     uint8_t sam_v;              /* SAM V2–V0 */
     uint8_t sam_f;              /* SAM F6–F0: display offset / 512 */
-    bool os9_kernel;            /* -kernel or DOS from /F0: keep INIT0.MMUEN */
+    bool os9_kernel;            /* -kernel or DOS from /D0: keep INIT0.MMUEN */
 
     QEMUTimer *frame_timer;
     qemu_irq cart;
