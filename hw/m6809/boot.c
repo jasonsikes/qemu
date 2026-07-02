@@ -41,6 +41,13 @@ bool m6809_load_firmware(MemoryRegion *program_mr, const char *firmware)
         return false;
     }
 
+    if (load_image_size(filename, memory_region_get_ram_ptr(program_mr),
+                        memory_region_size(program_mr)) < 0) {
+        error_report("Unable to load firmware image %s as raw binary",
+                     firmware);
+        return false;
+    }
+
     return true;
 }
 

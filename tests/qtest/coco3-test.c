@@ -63,6 +63,42 @@ static char *write_stub_rom(void)
     return path;
 }
 
+#define RESET_ENTRY  0x8c1b
+
+static char *write_reset_rom(void)
+{
+    uint8_t rom[ROM_SIZE];
+    char *path = NULL;
+    GError *err = NULL;
+    int fd;
+
+    memset(rom, 0, sizeof(rom));
+    rom[0] = 0x45; /* illegal if fetched from $8000 */
+    rom[RESET_ENTRY - ROM_BASE] = 0x20;
+    rom[RESET_ENTRY - ROM_BASE + 1] = 0xfe;
+    rom[ROM_SIZE - 2] = RESET_ENTRY >> 8;
+    rom[ROM_SIZE - 1] = RESET_ENTRY & 0xff;
+
+    fd = g_file_open_tmp("coco3-reset-XXXXXX", &path, &err);
+    g_assert_no_error(err);
+    g_assert_cmpint(write(fd, rom, sizeof(rom)), ==, sizeof(rom));
+    close(fd);
+    return path;
+}
+
+static void test_bios_reset_vector(void)
+{
+    char *path = write_reset_rom();
+    QTestState *s = qtest_initf("-M coco3 -bios %s", path);
+    char *regs = qtest_hmp(s, "info registers");
+
+    g_assert_nonnull(strstr(regs, "PC=8c1b"));
+    g_free(regs);
+    qtest_quit(s);
+    unlink(path);
+    g_free(path);
+}
+
 static QTestState *coco3_vm_new(const char *cpu)
 {
     if (cpu) {
@@ -412,6 +448,7 @@ int main(int argc, char **argv)
     g_test_init(&argc, &argv, NULL);
 
     rom_path = write_stub_rom();
+    qtest_add_func("/coco3/bios/reset-vector", test_bios_reset_vector);
     add_coco3_tests("/coco3", NULL);
     add_coco3_tests("/coco3/hd6309", "hd6309");
 
