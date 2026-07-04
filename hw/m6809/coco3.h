@@ -138,6 +138,7 @@ struct Coco3State {
     bool os9_kernel;            /* -kernel or DOS from /D0: keep INIT0.MMUEN */
 
     QEMUTimer *frame_timer;
+    qemu_irq pia0_cb1;          /* PIA0 CB1: 60 Hz field sync */
     qemu_irq cart;
     bool fake_cart_firq;
 

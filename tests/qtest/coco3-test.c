@@ -414,6 +414,43 @@ static void test_virt_rtc(const void *data)
     qtest_quit(s);
 }
 
+/* Color BASIC TIMER increments from PIA0 CB1 (FS) on each 60 Hz field. */
+static void test_pia0_fsync(const void *data)
+{
+    QTestState *s = coco3_vm_new(data);
+
+    /* CRB: data register, CB1 IRQ enable, falling edge. */
+    qtest_writeb(s, PIA0_CB, 0x05);
+    g_assert_cmphex(qtest_readb(s, PIA0_CB) & 0x80, ==, 0);
+
+    qtest_clock_step(s, 1000000000LL / 60);
+    g_assert_cmphex(qtest_readb(s, PIA0_CB) & 0x80, ==, 0x80);
+
+    qtest_readb(s, PIA0_DB);
+    g_assert_cmphex(qtest_readb(s, PIA0_CB) & 0x80, ==, 0);
+
+    qtest_quit(s);
+}
+
+/*
+ * $FFE0-$FFFF is vector RAM, filled from ROM at reset. Writing one byte
+ * must not make the rest of the table read as zero.
+ */
+static void test_vector_ram(const void *data)
+{
+    QTestState *s = coco3_vm_new(data);
+
+    g_assert_cmphex(qtest_readb(s, 0xfffe), ==, ROM_BASE >> 8);
+    g_assert_cmphex(qtest_readb(s, 0xffff), ==, ROM_BASE & 0xff);
+
+    qtest_writeb(s, 0xffe0, 0xaa);
+    g_assert_cmphex(qtest_readb(s, 0xffe0), ==, 0xaa);
+    g_assert_cmphex(qtest_readb(s, 0xfffe), ==, ROM_BASE >> 8);
+    g_assert_cmphex(qtest_readb(s, 0xffff), ==, ROM_BASE & 0xff);
+
+    qtest_quit(s);
+}
+
 static void add_coco3_tests(const char *prefix, const char *cpu)
 {
     char *path;
@@ -435,6 +472,12 @@ static void add_coco3_tests(const char *prefix, const char *cpu)
     g_free(path);
     path = g_strdup_printf("%s/mouse/packet", prefix);
     qtest_add_data_func(path, cpu, test_mouse_packet);
+    g_free(path);
+    path = g_strdup_printf("%s/pia0/fsync", prefix);
+    qtest_add_data_func(path, cpu, test_pia0_fsync);
+    g_free(path);
+    path = g_strdup_printf("%s/vectors/ram", prefix);
+    qtest_add_data_func(path, cpu, test_vector_ram);
     g_free(path);
     path = g_strdup_printf("%s/virt-rtc", prefix);
     qtest_add_data_func(path, cpu, test_virt_rtc);

@@ -150,14 +150,8 @@ static const MemoryRegionOps coco3_fexx_ops = {
 static uint64_t coco3_vec_read(void *opaque, hwaddr addr, unsigned size)
 {
     Coco3State *s = opaque;
-    uint8_t *rom;
 
-    if (s->vec_custom) {
-        return s->vec[addr];
-    }
-
-    rom = memory_region_get_ram_ptr(&s->rom);
-    return rom[memory_region_size(&s->rom) - GIME_VEC_SIZE + addr];
+    return s->vec[addr];
 }
 
 static void coco3_vec_write(void *opaque, hwaddr addr, uint64_t val,
@@ -166,7 +160,6 @@ static void coco3_vec_write(void *opaque, hwaddr addr, uint64_t val,
     Coco3State *s = opaque;
 
     s->vec[addr] = val;
-    s->vec_custom = true;
 }
 
 static const MemoryRegionOps coco3_vec_ops = {
@@ -766,13 +759,16 @@ static void coco3_keyboard_reset(Coco3State *s)
     coco3_keyboard_scan(s);
 }
 
-/* 60 Hz VBORD. */
+/* 60 Hz field, for Color BASIC TIMER and GIME VBORD. */
 static void coco3_frame_tick(void *opaque)
 {
     Coco3State *s = opaque;
 
     s->gime_pending |= GIME_IRQ_VBORD;
     coco3_gime_update_irqs(s);
+    /* Falling edge: Color BASIC enables CB1 IRQ with CRB bit 1 clear. */
+    qemu_irq_raise(s->pia0_cb1);
+    qemu_irq_lower(s->pia0_cb1);
     coco3_keyboard_hold_tick(s);
     coco3_video_invalidate(s);
     if (s->fake_cart_firq) {
@@ -944,6 +940,7 @@ static void coco3_realize(DeviceState *dev, Error **errp)
     memory_region_add_subregion_overlap(sysmem, COCO3_MOUSE_BASE,
                                         &s->mouse_io, COCO3_IO_PRIORITY);
 
+    s->pia0_cb1 = qdev_get_gpio_in_named(DEVICE(&s->pia0), "CB1", 0);
     s->cart = qdev_get_gpio_in_named(DEVICE(&s->pia1), "CB1", 0);
     s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, coco3_frame_tick, s);
     timer_mod(s->frame_timer,
@@ -973,7 +970,10 @@ static void coco3_reset_hold(Object *obj, ResetType type)
     }
     rom = memory_region_get_ram_ptr(&s->rom);
     sz = memory_region_size(&s->rom);
-    rst = lduw_be_p(rom + sz - 2);
+    /* $FFE0-$FFFF is RAM, loaded from ROM at reset. A single write must
+     * not discard the rest of the table (Super ECB LDA,X / STA,X). */
+    memcpy(s->vec, rom + sz - GIME_VEC_SIZE, GIME_VEC_SIZE);
+    rst = lduw_be_p(s->vec + GIME_VEC_SIZE - 2);
     if (rst) {
         cpu_set_pc(CPU(&s->cpu), rst);
     }
