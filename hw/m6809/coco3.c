@@ -76,8 +76,7 @@ static uint32_t coco3_mmu_block(const Coco3State *s, int page)
 
 /*
  * Blocks $3C-$3F show internal ROM unless SAM TY maps all RAM, or the ROM
- * select bits would have chosen cartridge ROM. There is no cartridge, so
- * those pages stay RAM.
+ * select bits chose cartridge ROM (then coco3_page_is_cart).
  */
 static bool coco3_page_is_rom(const Coco3State *s, uint32_t block)
 {
@@ -95,6 +94,26 @@ static bool coco3_page_is_rom(const Coco3State *s, uint32_t block)
     return true;
 }
 
+/* 16K external ($3E-$3F) or 32K external ($3C-$3F), if a cart ROM was loaded. */
+static bool coco3_page_is_cart(const Coco3State *s, uint32_t block)
+{
+    uint8_t rom_mode;
+
+    if (!s->cart_bus.present || s->sam_ty || block < GIME_ROM_BLOCK) {
+        return false;
+    }
+
+    rom_mode = s->init0 & GIME_INIT0_ROMSEL;
+    if (rom_mode == 2) {
+        return false;
+    }
+    if (rom_mode < 2 && block < GIME_CART_BLOCK) {
+        return false;
+    }
+
+    return true;
+}
+
 static void coco3_mmu_update_page(Coco3State *s, int page)
 {
     uint32_t block = coco3_mmu_block(s, page);
@@ -103,6 +122,8 @@ static void coco3_mmu_update_page(Coco3State *s, int page)
                                    block * GIME_PAGE_SIZE);
     memory_region_set_enabled(&s->rom_page[page],
                               coco3_page_is_rom(s, block));
+    memory_region_set_enabled(&s->cart_page[page],
+                              coco3_page_is_cart(s, block));
 }
 
 static void coco3_mmu_update_all(Coco3State *s)
@@ -114,6 +135,11 @@ static void coco3_mmu_update_all(Coco3State *s)
         coco3_mmu_update_page(s, page);
     }
     memory_region_transaction_commit();
+}
+
+void coco3_cart_remap(Coco3State *s)
+{
+    coco3_mmu_update_all(s);
 }
 
 static uint8_t *coco3_fexx_ptr(Coco3State *s, hwaddr addr)
@@ -824,6 +850,16 @@ static void coco3_realize(DeviceState *dev, Error **errp)
         memory_region_add_subregion_overlap(sysmem, i * GIME_PAGE_SIZE,
                                             &s->rom_page[i],
                                             COCO3_ROM_PRIORITY);
+
+        /* 16K cart sits in the external half: page 6/7 → offset 0/8K. */
+        snprintf(name, sizeof(name), "coco3.cart.page%d", i);
+        memory_region_init_alias(&s->cart_page[i], OBJECT(dev), name,
+                                 &s->cart_bus.mr,
+                                 (i & 1) * GIME_PAGE_SIZE, GIME_PAGE_SIZE);
+        memory_region_set_enabled(&s->cart_page[i], false);
+        memory_region_add_subregion_overlap(sysmem, i * GIME_PAGE_SIZE,
+                                            &s->cart_page[i],
+                                            COCO3_ROM_PRIORITY);
     }
 
     memory_region_init_io(&s->fexx, OBJECT(dev), &coco3_fexx_ops, s,
@@ -1052,6 +1088,10 @@ static void coco3_unrealize(DeviceState *dev)
 
 static void coco3_instance_init(Object *obj)
 {
+    Coco3State *s = COCO3(obj);
+
+    qbus_init(&s->cart_bus, sizeof(s->cart_bus), TYPE_COCO3_CART_BUS,
+              DEVICE(obj), "cart");
     qdev_init_gpio_in_named(DEVICE(obj), coco3_keyboard_column, "kb-col", 8);
     qdev_init_gpio_in_named(DEVICE(obj), coco3_vdg_mode, "vdg-mode", 8);
     qdev_init_gpio_in_named(DEVICE(obj), coco3_joy_pin, "joy-mux", 2);

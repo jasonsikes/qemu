@@ -451,6 +451,43 @@ static void test_vector_ram(const void *data)
     qtest_quit(s);
 }
 
+#define CART_ROM_SIZE  (16 * 1024)
+
+static char *write_cart_rom(void)
+{
+    uint8_t rom[CART_ROM_SIZE];
+    char *path = NULL;
+    GError *err = NULL;
+    int fd;
+
+    memset(rom, 0xff, sizeof(rom));
+    rom[0] = 'D';
+    rom[1] = 'K';
+
+    fd = g_file_open_tmp("coco3-cart-XXXXXX", &path, &err);
+    g_assert_no_error(err);
+    g_assert_cmpint(write(fd, rom, sizeof(rom)), ==, sizeof(rom));
+    close(fd);
+    return path;
+}
+
+/* ROMSEL 16K+16K maps cartridge ROM at $C000. */
+static void test_cart_rom(void)
+{
+    char *cart = write_cart_rom();
+    QTestState *s = qtest_initf("-M coco3 -device coco3-cart,romfile=%s -bios %s",
+                                cart, rom_path);
+
+    g_assert_cmphex(qtest_readb(s, 0xc000), ==, 'D');
+    g_assert_cmphex(qtest_readb(s, 0xc001), ==, 'K');
+    /* Second 8K of the 16K cart aliases at $E000 when ROMSEL is 16K+16K. */
+    g_assert_cmphex(qtest_readb(s, 0xe000), ==, 0xff);
+
+    qtest_quit(s);
+    unlink(cart);
+    g_free(cart);
+}
+
 static void add_coco3_tests(const char *prefix, const char *cpu)
 {
     char *path;
@@ -492,6 +529,7 @@ int main(int argc, char **argv)
 
     rom_path = write_stub_rom();
     qtest_add_func("/coco3/bios/reset-vector", test_bios_reset_vector);
+    qtest_add_func("/coco3/cart", test_cart_rom);
     add_coco3_tests("/coco3", NULL);
     add_coco3_tests("/coco3/hd6309", "hd6309");
 

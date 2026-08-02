@@ -20,6 +20,7 @@
 #include "virt_disk.h"
 #include "virt_cons.h"
 #include "virt_rtc.h"
+#include "coco3_cart.h"
 
 typedef struct QemuInputHandlerState QemuInputHandlerState;
 
@@ -104,9 +105,11 @@ struct Coco3State {
     char *cpu_type;
     MemoryRegion *ram;
     MemoryRegion rom;
+    Coco3CartBus cart_bus;
 
     MemoryRegion ram_page[GIME_PAGE_COUNT];
     MemoryRegion rom_page[GIME_PAGE_COUNT];
+    MemoryRegion cart_page[GIME_PAGE_COUNT];
     MemoryRegion fexx;          /* $FE00-$FEFF; MC3 pins this to block $3F */
     MemoryRegion vectors;
     uint8_t vec[GIME_VEC_SIZE];
@@ -184,6 +187,7 @@ struct Coco3State {
 };
 
 void coco3_gime_cart_raise(Coco3State *s);
+void coco3_cart_remap(Coco3State *s);
 void coco3_joy_ms_buttons(Coco3State *s, bool left, bool right);
 
 #endif /* HW_M6809_COCO3_H */

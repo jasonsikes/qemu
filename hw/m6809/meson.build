@@ -5,6 +5,7 @@ m6809_ss.add(when: 'CONFIG_MC6821', if_true: files(
 m6809_ss.add(when: 'CONFIG_COCO3', if_true: files(
   'boot.c',
   'coco3.c',
+  'coco3_cart.c',
   'coco3_video.c',
   'coco3_mouse.c',
   'virt_disk.c',
