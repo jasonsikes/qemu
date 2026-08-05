@@ -4079,5 +4079,6 @@ void m6809_translate_code(CPUState *cs, TranslationBlock *tb,
 {
     DisasContext dc = { };
 
-    translator_loop(cs, tb, max_insns, pc, host_pc, &m6809_tr_ops, &dc.base);
+    translator_loop(cs, tb, max_insns, pc, host_pc, &m6809_tr_ops, &dc.base,
+                    TCG_TYPE_VA);
 }

@@ -686,7 +686,7 @@ static void coco3_gfx_invalidate(void *opaque)
     s->video_dirty = true;
 }
 
-static void coco3_gfx_update(void *opaque)
+static bool coco3_gfx_update(void *opaque)
 {
     Coco3State *s = opaque;
     DisplaySurface *surface;
@@ -697,13 +697,13 @@ static void coco3_gfx_update(void *opaque)
     bool vdg_gfx = coco3_video_is_vdg_gfx(s);
 
     if (!gfx && !text && !vdg_text && !vdg_gfx && !s->video_dirty) {
-        return;
+        return true;
     }
     s->video_dirty = false;
 
     surface = qemu_console_surface(s->con);
     if (!surface || surface_bits_per_pixel(surface) != 32) {
-        return;
+        return true;
     }
 
     if (gfx) {
@@ -723,7 +723,8 @@ static void coco3_gfx_update(void *opaque)
         coco3_fill_border(s, surface);
     }
 
-    dpy_gfx_update_full(s->con);
+    qemu_console_update_full(s->con);
+    return true;
 }
 
 static const GraphicHwOps coco3_gfx_ops = {
@@ -733,7 +734,7 @@ static const GraphicHwOps coco3_gfx_ops = {
 
 void coco3_video_init(Coco3State *s)
 {
-    s->con = graphic_console_init(DEVICE(s), 0, &coco3_gfx_ops, s);
+    s->con = qemu_graphic_console_create(DEVICE(s), 0, &coco3_gfx_ops, s);
     qemu_console_resize(s->con, COCO3_DISPLAY_WIDTH, COCO3_DISPLAY_HEIGHT);
     s->video_dirty = true;
 }
@@ -741,7 +742,7 @@ void coco3_video_init(Coco3State *s)
 void coco3_video_invalidate(Coco3State *s)
 {
     if (s->con) {
-        graphic_hw_invalidate(s->con);
+        qemu_console_hw_invalidate(s->con);
     }
 }
 

@@ -96,7 +96,7 @@ static bool m6809_install_boottrack(M6809CPU *cpu, MemoryRegion *ram,
     memcpy(ram_ptr + ram_offset, data, len);
 
     for (i = 0; i < sizeof(coco3_vectors); i++) {
-        cpu_physical_memory_write(COCO3_VEC_TABLE + i, &coco3_vectors[i], 1);
+        physical_memory_write(COCO3_VEC_TABLE + i, &coco3_vectors[i], 1);
     }
 
     cpu_set_pc(CPU(cpu), OS9_BOOTTRACK_ENTRY);

@@ -26,6 +26,7 @@
 #include "exec/target_page.h"
 #include "exec/helper-proto.h"
 #include "accel/tcg/cpu-ldst.h"
+#include "accel/tcg/cpu-loop.h"
 #include "qemu/plugin.h"
 
 void helper_daa(CPUM6809State *env)

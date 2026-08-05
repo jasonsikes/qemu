@@ -120,27 +120,23 @@ static void coco3_mouse_queue_packet(Coco3State *s)
 }
 
 static void coco3_mouse_event(DeviceState *dev, QemuConsole *src G_GNUC_UNUSED,
-                              InputEvent *evt)
+                              QemuInputEvent *evt)
 {
     Coco3State *s = COCO3(dev);
-    InputMoveEvent *move;
-    InputBtnEvent *btn;
 
     switch (evt->type) {
     case INPUT_EVENT_KIND_REL:
-        move = evt->u.rel.data;
-        if (move->axis == INPUT_AXIS_X) {
-            s->mouse_dx += move->value;
-        } else if (move->axis == INPUT_AXIS_Y) {
-            s->mouse_dy += move->value;
+        if (evt->rel.axis == INPUT_AXIS_X) {
+            s->mouse_dx += evt->rel.value;
+        } else if (evt->rel.axis == INPUT_AXIS_Y) {
+            s->mouse_dy += evt->rel.value;
         }
         break;
     case INPUT_EVENT_KIND_BTN:
-        btn = evt->u.btn.data;
-        if (btn->button == INPUT_BUTTON_LEFT) {
-            s->mouse_left = btn->down;
-        } else if (btn->button == INPUT_BUTTON_RIGHT) {
-            s->mouse_right = btn->down;
+        if (evt->btn.button == INPUT_BUTTON_LEFT) {
+            s->mouse_left = evt->btn.down;
+        } else if (evt->btn.button == INPUT_BUTTON_RIGHT) {
+            s->mouse_right = evt->btn.down;
         } else {
             return;
         }

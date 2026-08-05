@@ -655,24 +655,22 @@ void coco3_joy_ms_buttons(Coco3State *s, bool left, bool right)
 
 static void coco3_pointer_event(DeviceState *dev,
                                 QemuConsole *src G_GNUC_UNUSED,
-                                InputEvent *evt)
+                                QemuInputEvent *evt)
 {
     Coco3State *s = COCO3(dev);
-    InputMoveEvent *move;
 
     if (evt->type != INPUT_EVENT_KIND_ABS) {
         return;
     }
-    move = evt->u.abs.data;
-    if (move->axis == INPUT_AXIS_X) {
+    if (evt->abs.axis == INPUT_AXIS_X) {
         s->joy_axis[COCO3_JOY_RX] =
-            qemu_input_scale_axis(move->value,
+            qemu_input_scale_axis(evt->abs.value,
                                   INPUT_EVENT_ABS_MIN,
                                   INPUT_EVENT_ABS_MAX,
                                   0, COCO3_JOY_MAX);
-    } else if (move->axis == INPUT_AXIS_Y) {
+    } else if (evt->abs.axis == INPUT_AXIS_Y) {
         s->joy_axis[COCO3_JOY_RY] =
-            qemu_input_scale_axis(move->value,
+            qemu_input_scale_axis(evt->abs.value,
                                   INPUT_EVENT_ABS_MIN,
                                   INPUT_EVENT_ABS_MAX,
                                   0, COCO3_JOY_MAX);
@@ -695,25 +693,19 @@ static const QemuInputHandler coco3_pointer_handler = {
 
 static void coco3_keyboard_event(DeviceState *dev,
                                  QemuConsole *src G_GNUC_UNUSED,
-                                 InputEvent *evt)
+                                 QemuInputEvent *evt)
 {
     Coco3State *s = COCO3(dev);
-    InputKeyEvent *key = evt->u.key.data;
-    int qcode = qemu_input_key_value_to_qcode(key->key);
-    unsigned int lnx;
+    unsigned int lnx = evt->key.key;
     unsigned int word;
     uint64_t bit;
 
-    if (qcode >= qemu_input_map_qcode_to_linux_len) {
-        return;
-    }
-    lnx = qemu_input_map_qcode_to_linux[qcode];
     if (lnx >= 128) {
         return;
     }
     word = lnx / 64;
     bit = 1ULL << (lnx % 64);
-    if (key->down) {
+    if (evt->key.down) {
         bool host_shift = coco3_host_key_down(s, KEY_LEFTSHIFT) ||
                           coco3_host_key_down(s, KEY_RIGHTSHIFT) ||
                           lnx == KEY_LEFTSHIFT || lnx == KEY_RIGHTSHIFT;

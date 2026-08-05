@@ -236,7 +236,7 @@ static void hd6309_cpu_initfn(Object *obj)
 
 static const struct SysemuCPUOps m6809_sysemu_ops = {
     .has_work = m6809_cpu_has_work,
-    .get_phys_page_debug = m6809_cpu_get_phys_addr_debug,
+    .get_phys_addr_debug = m6809_cpu_get_phys_addr_debug,
 };
 
 static vaddr m6809_pointer_wrap(CPUState *cs, int mmu_idx,
