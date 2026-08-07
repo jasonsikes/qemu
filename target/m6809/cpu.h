@@ -172,6 +172,8 @@ hwaddr m6809_cpu_get_phys_addr_debug(CPUState *cpu, vaddr addr);
 bool m6809_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                         MMUAccessType access_type, int mmu_idx,
                         bool probe, uintptr_t retaddr);
+int m6809_cpu_gdb_read_register(CPUState *cpu, GByteArray *buf, int reg);
+int m6809_cpu_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg);
 int m6809_print_insn(bfd_vma addr, disassemble_info *info);
 
 void m6809_tcg_init(void);

@@ -9,6 +9,7 @@ m6809_common_system_ss = ss.source_set()
 m6809_ss.add(gen)
 m6809_ss.add(files(
   'cpu.c',
+  'gdbstub.c',
   'helper.c',
   'translate.c',
   'disas.c',
