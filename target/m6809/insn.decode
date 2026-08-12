@@ -399,9 +399,20 @@ SYNC                0001 0011
 #
 # 6309. Every trans_* gates on M6809_FEATURE_6309 so a 6809 still
 # gen_illegal()s these encodings. $14 is a named inherent so 6309 SEXW
-# and later Turbo9 EMUL can share the decode row.
+# and Turbo9 EMUL share the decode row (three-way dispatch in trans_INH14).
 #
 INH14               0001 0100
+
+#
+# Turbo9 HC12-style mul/div (inherent). trans_* gates on
+# M6809_FEATURE_TURBO9. Encodings from turbo9_urtl.asm SAU16, not HC12.
+#
+EMULS               0001 0101
+IDIV                0001 1000
+EDIV                0001 0000 0001 0100
+EDIVS               0001 0000 0001 0101
+IDIVS               0001 0000 0001 1000
+FDIV                0001 0000 0001 1001
 
 OIM_dir             0000 0001 .... .... .... ....           @op_imm_dir
 OIM_idx             0110 0001 .... ....                     @op_imm8

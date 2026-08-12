@@ -25,6 +25,7 @@
 
 typedef struct DisasContext {
     disassemble_info *info;
+    CPUM6809State *env;
     uint32_t addr;
     int len;
 } DisasContext;
@@ -380,7 +381,40 @@ INSN(SEX,      "sex",  "")
 INSN(EXG,      "exg",  "$%02x", a->post)
 INSN(TFR,      "tfr",  "$%02x", a->post)
 
-INSN(INH14,    "sexw", "")
+static bool disas_feature(DisasContext *ctx, int feature)
+{
+    return ctx->env && m6809_feature(ctx->env, feature);
+}
+
+static bool trans_INH14(DisasContext *ctx, arg_INH14 *a)
+{
+    if (disas_feature(ctx, M6809_FEATURE_6309)) {
+        output("sexw", "");
+        return true;
+    }
+    if (disas_feature(ctx, M6809_FEATURE_TURBO9)) {
+        output("emul", "");
+        return true;
+    }
+    return false;
+}
+
+#define TURBO9_INSN(opcode, mnemonic)                                   \
+static bool trans_##opcode(DisasContext *ctx, arg_##opcode *a)          \
+{                                                                       \
+    if (!disas_feature(ctx, M6809_FEATURE_TURBO9)) {                    \
+        return false;                                                   \
+    }                                                                   \
+    output(mnemonic, "");                                               \
+    return true;                                                        \
+}
+
+TURBO9_INSN(EMULS, "emuls")
+TURBO9_INSN(IDIV,  "idiv")
+TURBO9_INSN(EDIV,  "ediv")
+TURBO9_INSN(EDIVS, "edivs")
+TURBO9_INSN(IDIVS, "idivs")
+TURBO9_INSN(FDIV,  "fdiv")
 INSN(LDMD,     "ldmd", "#$%02x", a->imm)
 INSN(BITMD,    "bitmd", "#$%02x", a->imm)
 INSN(PSHSW,    "pshsw", "")
@@ -519,6 +553,7 @@ int m6809_print_insn(bfd_vma addr, disassemble_info *info)
 {
     DisasContext ctx = {
         .info = info,
+        .env = info->private_data,
         .addr = addr,
         .len = 0,
     };

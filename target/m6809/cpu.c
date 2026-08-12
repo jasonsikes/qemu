@@ -160,6 +160,7 @@ static void m6809_cpu_disas_set_info(const CPUState *cpu, disassemble_info *info
     info->endian = BFD_ENDIAN_BIG;
     info->mach = bfd_arch_m6809;
     info->print_insn = m6809_print_insn;
+    info->private_data = cpu_env((CPUState *)cpu);
 }
 
 static void m6809_cpu_dump_state(CPUState *cs, FILE *f, int flags)

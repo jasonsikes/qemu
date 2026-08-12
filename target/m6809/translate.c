@@ -862,6 +862,15 @@ static bool require_6309(DisasContext *ctx)
     return true;
 }
 
+static bool require_turbo9(DisasContext *ctx)
+{
+    if (!m6809_feature(ctx->env, M6809_FEATURE_TURBO9)) {
+        gen_illegal(ctx);
+        return false;
+    }
+    return true;
+}
+
 /* Unmasking I/F: exit the TB. */
 static void gen_exit_after_cc_write(DisasContext *ctx)
 {
@@ -2668,29 +2677,52 @@ static bool trans_INH14(DisasContext *ctx, arg_INH14 *a)
     TCGv_i32 d;
     TCGv_i32 t;
 
-    if (!require_6309(ctx)) {
+    if (m6809_feature(ctx->env, M6809_FEATURE_6309)) {
+        /* SEXW: copy W's sign into D. N from W bit 15; Z if Q is 0; V/C unchanged. */
+        w = tcg_temp_new_i32();
+        d = tcg_temp_new_i32();
+        t = tcg_temp_new_i32();
+        gen_get_w(w);
+        tcg_gen_ext16s_i32(d, w);
+        tcg_gen_sari_i32(d, d, 15);
+        tcg_gen_andi_i32(d, d, 0xffff);
+        gen_set_d(d);
+        tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z));
+        tcg_gen_setcondi_i32(TCG_COND_EQ, t, w, 0);
+        tcg_gen_shli_i32(t, t, 2);
+        tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+        tcg_gen_shri_i32(t, w, 15);
+        tcg_gen_andi_i32(t, t, 1);
+        tcg_gen_shli_i32(t, t, 3);
+        tcg_gen_or_i32(cpu_cc, cpu_cc, t);
         return true;
     }
 
-    /* SEXW: copy W's sign into D. N from W bit 15; Z if Q is 0; V/C unchanged. */
-    w = tcg_temp_new_i32();
-    d = tcg_temp_new_i32();
-    t = tcg_temp_new_i32();
-    gen_get_w(w);
-    tcg_gen_ext16s_i32(d, w);
-    tcg_gen_sari_i32(d, d, 15);
-    tcg_gen_andi_i32(d, d, 0xffff);
-    gen_set_d(d);
-    tcg_gen_andi_i32(cpu_cc, cpu_cc, (uint32_t)~(CC_N | CC_Z));
-    tcg_gen_setcondi_i32(TCG_COND_EQ, t, w, 0);
-    tcg_gen_shli_i32(t, t, 2);
-    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
-    tcg_gen_shri_i32(t, w, 15);
-    tcg_gen_andi_i32(t, t, 1);
-    tcg_gen_shli_i32(t, t, 3);
-    tcg_gen_or_i32(cpu_cc, cpu_cc, t);
+    if (m6809_feature(ctx->env, M6809_FEATURE_TURBO9)) {
+        gen_helper_emul(tcg_env);
+        return true;
+    }
+
+    gen_illegal(ctx);
     return true;
 }
+
+#define TRANS_TURBO9_INH(name, helper)                                  \
+static bool trans_##name(DisasContext *ctx, arg_##name *a)              \
+{                                                                       \
+    if (!require_turbo9(ctx)) {                                         \
+        return true;                                                    \
+    }                                                                   \
+    gen_helper_##helper(tcg_env);                                       \
+    return true;                                                        \
+}
+
+TRANS_TURBO9_INH(EMULS, emuls)
+TRANS_TURBO9_INH(IDIV, idiv)
+TRANS_TURBO9_INH(EDIV, ediv)
+TRANS_TURBO9_INH(EDIVS, edivs)
+TRANS_TURBO9_INH(IDIVS, idivs)
+TRANS_TURBO9_INH(FDIV, fdiv)
 
 static bool do_im_mem(DisasContext *ctx, TCGv_i32 ea, int imm,
                       M6809LogicOp op, bool writeback)

@@ -351,6 +351,200 @@ void helper_divq(CPUM6809State *env, uint32_t src)
     }
 }
 
+/*
+ * Turbo9 SAU16: HC12-style mul/div. Do not use helper_muld/divd/divq
+ * (those are 6309 W/Q + trap). Divide-by-zero sets C; it does not trap.
+ */
+
+static void turbo9_set_nzc32(CPUM6809State *env, uint32_t result)
+{
+    env->cc &= ~(CC_N | CC_Z | CC_C);
+    if (result & 0x80000000u) {
+        env->cc |= CC_N;
+    }
+    if (result == 0) {
+        env->cc |= CC_Z;
+    }
+    if (result & 0x8000u) {
+        env->cc |= CC_C;
+    }
+}
+
+void helper_emul(CPUM6809State *env)
+{
+    uint32_t result = (uint32_t)m6809_get_d(env) * (env->y & 0xffff);
+
+    env->y = result >> 16;
+    m6809_set_d(env, result);
+    turbo9_set_nzc32(env, result);
+}
+
+void helper_emuls(CPUM6809State *env)
+{
+    int32_t result = (int16_t)m6809_get_d(env) * (int16_t)(env->y & 0xffff);
+
+    env->y = ((uint32_t)result) >> 16;
+    m6809_set_d(env, (uint32_t)result);
+    turbo9_set_nzc32(env, (uint32_t)result);
+}
+
+void helper_idiv(CPUM6809State *env)
+{
+    uint16_t dividend = m6809_get_d(env);
+    uint16_t divisor = env->x & 0xffff;
+    uint16_t quot;
+
+    env->cc &= ~(CC_Z | CC_V | CC_C);
+    if (divisor == 0) {
+        env->x = 0xffff;
+        env->cc |= CC_C;
+        return;
+    }
+
+    quot = dividend / divisor;
+    env->x = quot;
+    m6809_set_d(env, dividend % divisor);
+    if (quot == 0) {
+        env->cc |= CC_Z;
+    }
+}
+
+/*
+ * Remainder takes the sign of the divisor (floor when divisor > 0), so
+ * EDIVS Y:D=$FFF502EA / X=$0653 yields Y=$FE43, D=$0131 as in CPU12 notes.
+ */
+static void turbo9_sdiv(int64_t dividend, int32_t divisor,
+                        int64_t *quot_out, int64_t *rem_out)
+{
+    int64_t quot = dividend / divisor;
+    int64_t rem = dividend % divisor;
+
+    if (rem != 0 && ((dividend < 0) != (divisor < 0))) {
+        quot--;
+        rem += divisor;
+    }
+    *quot_out = quot;
+    *rem_out = rem;
+}
+
+void helper_idivs(CPUM6809State *env)
+{
+    int16_t dividend = (int16_t)m6809_get_d(env);
+    int16_t divisor = (int16_t)(env->x & 0xffff);
+    int64_t quot;
+    int64_t rem;
+
+    env->cc &= ~(CC_N | CC_Z | CC_V | CC_C);
+    if (divisor == 0) {
+        env->cc |= CC_C;
+        return;
+    }
+    if (dividend == (int16_t)0x8000 && divisor == (int16_t)0xffff) {
+        env->cc |= CC_V;
+        return;
+    }
+
+    turbo9_sdiv(dividend, divisor, &quot, &rem);
+    env->x = (uint16_t)quot;
+    m6809_set_d(env, (uint16_t)rem);
+    if (quot & 0x8000) {
+        env->cc |= CC_N;
+    }
+    if (quot == 0) {
+        env->cc |= CC_Z;
+    }
+}
+
+void helper_ediv(CPUM6809State *env)
+{
+    uint32_t dividend = ((uint32_t)(env->y & 0xffff) << 16) | m6809_get_d(env);
+    uint16_t divisor = env->x & 0xffff;
+    uint32_t quot;
+
+    env->cc &= ~(CC_N | CC_Z | CC_V | CC_C);
+    if (divisor == 0) {
+        env->cc |= CC_C;
+        return;
+    }
+
+    quot = dividend / divisor;
+    if (quot > 0xffff) {
+        env->cc |= CC_V;
+        return;
+    }
+
+    env->y = quot;
+    m6809_set_d(env, dividend % divisor);
+    if (quot & 0x8000) {
+        env->cc |= CC_N;
+    }
+    if (quot == 0) {
+        env->cc |= CC_Z;
+    }
+}
+
+void helper_edivs(CPUM6809State *env)
+{
+    int32_t dividend = (int32_t)(((uint32_t)(env->y & 0xffff) << 16) |
+                                 m6809_get_d(env));
+    int16_t divisor = (int16_t)(env->x & 0xffff);
+    int64_t quot;
+    int64_t rem;
+
+    env->cc &= ~(CC_N | CC_Z | CC_V | CC_C);
+    if (divisor == 0) {
+        env->cc |= CC_C;
+        return;
+    }
+    if (dividend == INT32_MIN && divisor == (int16_t)0xffff) {
+        env->cc |= CC_V;
+        return;
+    }
+
+    turbo9_sdiv(dividend, divisor, &quot, &rem);
+    if (quot > 32767 || quot < -32768) {
+        env->cc |= CC_V;
+        return;
+    }
+
+    env->y = (uint16_t)quot;
+    m6809_set_d(env, (uint16_t)rem);
+    if (quot & 0x8000) {
+        env->cc |= CC_N;
+    }
+    if (quot == 0) {
+        env->cc |= CC_Z;
+    }
+}
+
+void helper_fdiv(CPUM6809State *env)
+{
+    uint16_t dividend = m6809_get_d(env);
+    uint16_t divisor = env->x & 0xffff;
+    uint32_t num;
+    uint16_t quot;
+
+    env->cc &= ~(CC_Z | CC_V | CC_C);
+    if (divisor == 0) {
+        env->x = 0xffff;
+        env->cc |= CC_C | CC_V;
+        return;
+    }
+    if (divisor <= dividend) {
+        env->x = 0xffff;
+        env->cc |= CC_V;
+        return;
+    }
+
+    num = (uint32_t)dividend << 16;
+    quot = num / divisor;
+    env->x = quot;
+    m6809_set_d(env, num % divisor);
+    if (quot == 0) {
+        env->cc |= CC_Z;
+    }
+}
+
 static uint16_t tfm_get_reg(CPUM6809State *env, int r)
 {
     switch (r) {
