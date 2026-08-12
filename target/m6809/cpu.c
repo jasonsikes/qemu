@@ -232,6 +232,13 @@ static void hd6309_cpu_initfn(Object *obj)
     m6809_set_feature(env, M6809_FEATURE_6309);
 }
 
+static void turbo9_cpu_initfn(Object *obj)
+{
+    CPUM6809State *env = cpu_env(CPU(obj));
+
+    m6809_set_feature(env, M6809_FEATURE_TURBO9);
+}
+
 #include "hw/core/sysemu-cpu-ops.h"
 
 static const struct SysemuCPUOps m6809_sysemu_ops = {
@@ -308,6 +315,11 @@ static const TypeInfo m6809_cpu_type_info[] = {
         .name = M6809_CPU_TYPE_NAME("hd6309"),
         .parent = TYPE_M6809_CPU,
         .instance_init = hd6309_cpu_initfn,
+    },
+    {
+        .name = M6809_CPU_TYPE_NAME("turbo9"),
+        .parent = TYPE_M6809_CPU,
+        .instance_init = turbo9_cpu_initfn,
     },
 };
 

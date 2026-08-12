@@ -101,6 +101,7 @@ static void coco3_machine_class_init(ObjectClass *oc, const void *data)
     static const char * const valid_cpu_types[] = {
         M6809_CPU_TYPE_NAME("m6809"),
         M6809_CPU_TYPE_NAME("hd6309"),
+        M6809_CPU_TYPE_NAME("turbo9"),
         NULL
     };
     MachineClass *mc = MACHINE_CLASS(oc);
