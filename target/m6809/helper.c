@@ -352,11 +352,16 @@ void helper_divq(CPUM6809State *env, uint32_t src)
 }
 
 /*
- * Turbo9 SAU16: HC12-style mul/div. Do not use helper_muld/divd/divq
- * (those are 6309 W/Q + trap). Divide-by-zero sets C; it does not trap.
+ * Turbo9 SAU16: HC12-style mul/div (CPU12 RM). Do not use helper_muld /
+ * divd / divq or helper_raise_division_by_zero (those are 6309 W/Q + trap).
+ * Divide-by-zero sets C and does not trap. H is never affected.
+ *
+ * Signed remainder follows floor division (remainder has the sign of the
+ * divisor) so EDIVS Y:D=$FFF502EA / X=$0653 → Y=$FE43, D=$0131.
+ * Overflow leaves destinations unchanged (CPU12: undefined).
  */
 
-static void turbo9_set_nzc32(CPUM6809State *env, uint32_t result)
+static void turbo9_emul_cc(CPUM6809State *env, uint32_t result)
 {
     env->cc &= ~(CC_N | CC_Z | CC_C);
     if (result & 0x80000000u) {
@@ -365,29 +370,64 @@ static void turbo9_set_nzc32(CPUM6809State *env, uint32_t result)
     if (result == 0) {
         env->cc |= CC_Z;
     }
+    /* C is bit 15 of the 32-bit product (low-word MSB), for rounding Y. */
     if (result & 0x8000u) {
         env->cc |= CC_C;
     }
 }
 
+static void turbo9_cc_nz16(CPUM6809State *env, uint16_t result)
+{
+    if (result & 0x8000) {
+        env->cc |= CC_N;
+    }
+    if (result == 0) {
+        env->cc |= CC_Z;
+    }
+}
+
+/* Floor divide: C99 toward-zero, then adjust so rem has the sign of divisor. */
+static void turbo9_sdiv(int64_t dividend, int32_t divisor,
+                        int64_t *quot_out, int64_t *rem_out)
+{
+    int64_t quot = dividend / divisor;
+    int64_t rem = dividend % divisor;
+
+    if (rem != 0 && ((dividend < 0) != (divisor < 0))) {
+        quot--;
+        rem += divisor;
+    }
+    *quot_out = quot;
+    *rem_out = rem;
+}
+
+/* EMUL: unsigned (D)×(Y) → Y:D. V unchanged. */
 void helper_emul(CPUM6809State *env)
 {
-    uint32_t result = (uint32_t)m6809_get_d(env) * (env->y & 0xffff);
+    uint32_t result = (uint32_t)m6809_get_d(env) *
+                      (uint32_t)(env->y & 0xffff);
 
     env->y = result >> 16;
     m6809_set_d(env, result);
-    turbo9_set_nzc32(env, result);
+    turbo9_emul_cc(env, result);
 }
 
+/* EMULS: signed (D)×(Y) → Y:D. Same NZC as EMUL; V unchanged. */
 void helper_emuls(CPUM6809State *env)
 {
-    int32_t result = (int16_t)m6809_get_d(env) * (int16_t)(env->y & 0xffff);
+    int32_t result = (int32_t)(int16_t)m6809_get_d(env) *
+                     (int32_t)(int16_t)(env->y & 0xffff);
 
     env->y = ((uint32_t)result) >> 16;
     m6809_set_d(env, (uint32_t)result);
-    turbo9_set_nzc32(env, (uint32_t)result);
+    turbo9_emul_cc(env, (uint32_t)result);
 }
 
+/*
+ * IDIV: unsigned (D)÷(X) → X quot, D rem.
+ * N unchanged, V cleared, Z from quot, C iff divisor is 0.
+ * Div0: X=$FFFF, D unchanged (remainder is indeterminate on silicon).
+ */
 void helper_idiv(CPUM6809State *env)
 {
     uint16_t dividend = m6809_get_d(env);
@@ -410,23 +450,10 @@ void helper_idiv(CPUM6809State *env)
 }
 
 /*
- * Remainder takes the sign of the divisor (floor when divisor > 0), so
- * EDIVS Y:D=$FFF502EA / X=$0653 yields Y=$FE43, D=$0131 as in CPU12 notes.
+ * IDIVS: signed (D)÷(X) → X quot, D rem.
+ * N/Z from quot, V if $8000/$FFFF, C iff divisor is 0.
+ * Div0: X=$FFFF, D unchanged. Overflow: X and D unchanged.
  */
-static void turbo9_sdiv(int64_t dividend, int32_t divisor,
-                        int64_t *quot_out, int64_t *rem_out)
-{
-    int64_t quot = dividend / divisor;
-    int64_t rem = dividend % divisor;
-
-    if (rem != 0 && ((dividend < 0) != (divisor < 0))) {
-        quot--;
-        rem += divisor;
-    }
-    *quot_out = quot;
-    *rem_out = rem;
-}
-
 void helper_idivs(CPUM6809State *env)
 {
     int16_t dividend = (int16_t)m6809_get_d(env);
@@ -436,6 +463,7 @@ void helper_idivs(CPUM6809State *env)
 
     env->cc &= ~(CC_N | CC_Z | CC_V | CC_C);
     if (divisor == 0) {
+        env->x = 0xffff;
         env->cc |= CC_C;
         return;
     }
@@ -447,14 +475,14 @@ void helper_idivs(CPUM6809State *env)
     turbo9_sdiv(dividend, divisor, &quot, &rem);
     env->x = (uint16_t)quot;
     m6809_set_d(env, (uint16_t)rem);
-    if (quot & 0x8000) {
-        env->cc |= CC_N;
-    }
-    if (quot == 0) {
-        env->cc |= CC_Z;
-    }
+    turbo9_cc_nz16(env, (uint16_t)quot);
 }
 
+/*
+ * EDIV: unsigned (Y:D)÷(X) → Y quot, D rem.
+ * N/Z from quot, V if quot > $FFFF, C iff divisor is 0.
+ * Div0 or overflow: Y and D unchanged.
+ */
 void helper_ediv(CPUM6809State *env)
 {
     uint32_t dividend = ((uint32_t)(env->y & 0xffff) << 16) | m6809_get_d(env);
@@ -475,14 +503,14 @@ void helper_ediv(CPUM6809State *env)
 
     env->y = quot;
     m6809_set_d(env, dividend % divisor);
-    if (quot & 0x8000) {
-        env->cc |= CC_N;
-    }
-    if (quot == 0) {
-        env->cc |= CC_Z;
-    }
+    turbo9_cc_nz16(env, (uint16_t)quot);
 }
 
+/*
+ * EDIVS: signed (Y:D)÷(X) → Y quot, D rem.
+ * N/Z from quot, V if quot does not fit signed 16, C iff divisor is 0.
+ * Div0 or overflow: Y and D unchanged.
+ */
 void helper_edivs(CPUM6809State *env)
 {
     int32_t dividend = (int32_t)(((uint32_t)(env->y & 0xffff) << 16) |
@@ -509,14 +537,14 @@ void helper_edivs(CPUM6809State *env)
 
     env->y = (uint16_t)quot;
     m6809_set_d(env, (uint16_t)rem);
-    if (quot & 0x8000) {
-        env->cc |= CC_N;
-    }
-    if (quot == 0) {
-        env->cc |= CC_Z;
-    }
+    turbo9_cc_nz16(env, (uint16_t)quot);
 }
 
+/*
+ * FDIV: unsigned fractional (D<<16)÷(X) → X quot, D rem. N unchanged.
+ * V if X <= D (result >= 1.0). C iff divisor is 0.
+ * Overflow or div0: X=$FFFF, D unchanged (remainder indeterminate).
+ */
 void helper_fdiv(CPUM6809State *env)
 {
     uint16_t dividend = m6809_get_d(env);
