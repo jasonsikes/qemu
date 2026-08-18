@@ -532,6 +532,7 @@ int main(int argc, char **argv)
     qtest_add_func("/coco3/cart", test_cart_rom);
     add_coco3_tests("/coco3", NULL);
     add_coco3_tests("/coco3/hd6309", "hd6309");
+    add_coco3_tests("/coco3/turbo9", "turbo9");
 
     ret = g_test_run();
 

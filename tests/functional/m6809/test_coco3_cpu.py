@@ -765,5 +765,17 @@ class Coco3Hd6309MachineTest(Coco3MachineTest):
         self.skipTest('VDG text scanout is covered on the default CPU')
 
 
+class Coco3Turbo9MachineTest(Coco3MachineTest):
+    """Same machine tests on -cpu turbo9 (6809 opcodes plus HC12 mul/div)."""
+
+    cpu = 'turbo9'
+
+    def test_gime_text(self):
+        self.skipTest('GIME text scanout is covered on the default CPU')
+
+    def test_vdg_text(self):
+        self.skipTest('VDG text scanout is covered on the default CPU')
+
+
 if __name__ == '__main__':
     QemuSystemTest.main()

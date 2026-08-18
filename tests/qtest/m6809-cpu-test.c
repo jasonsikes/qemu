@@ -54,9 +54,11 @@ static const IsaCase isa_cases[] = {
 
 static QTestState *qts;
 static QTestState *qts_hd6309;
+static QTestState *qts_turbo9;
 static char *rom_path;
 static bool ran;
 static bool ran_hd6309;
+static bool ran_turbo9;
 
 static char *write_stub_rom(void)
 {
@@ -208,6 +210,20 @@ static void test_isa_case_hd6309(const void *data)
     ran = saved_ran;
 }
 
+/* Same 6809 programs on -cpu turbo9 (including 8→16 TFR fill of $FF). */
+static void test_isa_case_turbo9(const void *data)
+{
+    QTestState *saved = qts;
+    bool saved_ran = ran;
+
+    qts = qts_turbo9;
+    ran = ran_turbo9;
+    isa_run_case(data);
+    ran_turbo9 = ran;
+    qts = saved;
+    ran = saved_ran;
+}
+
 static void test_invalid_indexed(void)
 {
     static const uint8_t code[] = {
@@ -242,17 +258,27 @@ static QTestState *isa_vm_cpu(const char *cpu)
                        cpu, rom_path);
 }
 
-static void hd6309_isa_run(const IsaCase *c)
+static void isa_run_on_cpu(const char *cpu, const IsaCase *c)
 {
     QTestState *saved = qts;
     bool saved_ran = ran;
 
-    qts = isa_vm_cpu("hd6309");
+    qts = isa_vm_cpu(cpu);
     ran = false;
     isa_run_case(c);
     qtest_quit(qts);
     qts = saved;
     ran = saved_ran;
+}
+
+static void hd6309_isa_run(const IsaCase *c)
+{
+    isa_run_on_cpu("hd6309", c);
+}
+
+static void turbo9_isa_run(const IsaCase *c)
+{
+    isa_run_on_cpu("turbo9", c);
 }
 
 static void hd6309_firq_run(const IsaCase *c)
@@ -1246,6 +1272,311 @@ static void test_m6809_ldmd_halts(void)
     qtest_quit(s);
 }
 
+/* CPU12 EMUL: D=$FA34, Y=$012B → Y:D=$01243ABC. */
+static void test_turbo9_emul(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0xfa, 0x34,       /* ldd #$fa34 */
+        0x10, 0x8e, 0x01, 0x2b, /* ldy #$012b */
+        0x14,                   /* emul */
+    };
+    const IsaCase c = {
+        .name = "turbo9_emul",
+        .disas = "ldd #$fa34; ldy #$012b; emul",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "Y=0124", "D=3abc", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+/* Signed: D=$FA34 (-1484), Y=$012B (299) → Y:D=$FFF93ABC. */
+static void test_turbo9_emuls(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0xfa, 0x34,       /* ldd #$fa34 */
+        0x10, 0x8e, 0x01, 0x2b, /* ldy #$012b */
+        0x15,                   /* emuls */
+    };
+    const IsaCase c = {
+        .name = "turbo9_emuls",
+        .disas = "ldd #$fa34; ldy #$012b; emuls",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "Y=fff9", "D=3abc", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+static void test_turbo9_idiv(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x00, 0x0a,       /* ldd #10 */
+        0x8e, 0x00, 0x03,       /* ldx #3 */
+        0x18,                   /* idiv */
+    };
+    const IsaCase c = {
+        .name = "turbo9_idiv",
+        .disas = "ldd #10; ldx #3; idiv",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "X=0003", "D=0001", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+static void test_turbo9_idivs(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x00, 0x0c,       /* ldd #12 */
+        0x8e, 0x00, 0x05,       /* ldx #5 */
+        0x10, 0x18,             /* idivs */
+    };
+    const IsaCase c = {
+        .name = "turbo9_idivs",
+        .disas = "ldd #12; ldx #5; idivs",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "X=0002", "D=0002", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+static void test_turbo9_ediv(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x8e, 0x00, 0x00, /* ldy #0 */
+        0xcc, 0x00, 0x64,       /* ldd #100 */
+        0x8e, 0x00, 0x05,       /* ldx #5 */
+        0x10, 0x14,             /* ediv */
+    };
+    const IsaCase c = {
+        .name = "turbo9_ediv",
+        .disas = "ldy #0; ldd #100; ldx #5; ediv",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "Y=0014", "D=0000", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+/* CPU12 EDIVS: Y:D=$FFF502EA, X=$0653 → Y=$FE43, D=$0131. */
+static void test_turbo9_edivs(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x8e, 0xff, 0xf5, /* ldy #$fff5 */
+        0xcc, 0x02, 0xea,       /* ldd #$02ea */
+        0x8e, 0x06, 0x53,       /* ldx #$0653 */
+        0x10, 0x15,             /* edivs */
+    };
+    const IsaCase c = {
+        .name = "turbo9_edivs",
+        .disas = "ldy #$fff5; ldd #$02ea; ldx #$0653; edivs",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "Y=fe43", "D=0131", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+/* FDIV 1/2 → 0.5 = $8000, rem 0. */
+static void test_turbo9_fdiv(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x00, 0x01,       /* ldd #1 */
+        0x8e, 0x00, 0x02,       /* ldx #2 */
+        0x10, 0x19,             /* fdiv */
+    };
+    const IsaCase c = {
+        .name = "turbo9_fdiv",
+        .disas = "ldd #1; ldx #2; fdiv",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "X=8000", "D=0000", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+/*
+ * IDIV by 0: C set, X=$FFFF, D unchanged, PC advances. $FFEE is poisoned so a
+ * 6309-style trap would miss the spin PC.
+ */
+static void test_turbo9_idiv_div0(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0xcc, 0x00, 0x0a,       /* ldd #10 */
+        0x8e, 0x00, 0x00,       /* ldx #0 */
+        0x18,                   /* idiv */
+    };
+    const IsaCase c = {
+        .name = "turbo9_idiv_div0",
+        .disas = "lds #$4000; ldd #10; ldx #0; idiv",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){
+            "X=ffff", "D=000a", "S=4000", "CC=51", NULL
+        },
+        .vec = (const IsaVec[]){ { 0xffee, 0x8100 } },
+        .n_vec = 1,
+    };
+
+    turbo9_isa_run(&c);
+}
+
+static void test_turbo9_ediv_overflow(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x8e, 0xff, 0xff, /* ldy #$ffff */
+        0xcc, 0xff, 0xff,       /* ldd #$ffff */
+        0x8e, 0x00, 0x01,       /* ldx #1 */
+        0x10, 0x14,             /* ediv */
+    };
+    const IsaCase c = {
+        .name = "turbo9_ediv_overflow",
+        .disas = "ldy #$ffff; ldd #$ffff; ldx #1; ediv",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "Y=ffff", "D=ffff", "CC=52", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+static void test_turbo9_edivs_overflow(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x8e, 0x7f, 0xff, /* ldy #$7fff */
+        0xcc, 0xff, 0xff,       /* ldd #$ffff */
+        0x8e, 0x00, 0x01,       /* ldx #1 */
+        0x10, 0x15,             /* edivs */
+    };
+    const IsaCase c = {
+        .name = "turbo9_edivs_overflow",
+        .disas = "ldy #$7fff; ldd #$ffff; ldx #1; edivs",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "Y=7fff", "D=ffff", "CC=52", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+/* $8000 / $FFFF does not fit signed 16; X and D unchanged. */
+static void test_turbo9_idivs_overflow(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x80, 0x00,       /* ldd #$8000 */
+        0x8e, 0xff, 0xff,       /* ldx #$ffff */
+        0x10, 0x18,             /* idivs */
+    };
+    const IsaCase c = {
+        .name = "turbo9_idivs_overflow",
+        .disas = "ldd #$8000; ldx #$ffff; idivs",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "X=ffff", "D=8000", "CC=52", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+/* FDIV overflow when D >= X: X=$FFFF, D unchanged, V set. */
+static void test_turbo9_fdiv_overflow(void)
+{
+    static const uint8_t code[] = {
+        0xcc, 0x00, 0x05,       /* ldd #5 */
+        0x8e, 0x00, 0x03,       /* ldx #3 */
+        0x10, 0x19,             /* fdiv */
+    };
+    const IsaCase c = {
+        .name = "turbo9_fdiv_overflow",
+        .disas = "ldd #5; ldx #3; fdiv",
+        .code = code,
+        .code_len = sizeof(code),
+        .regs = (const char *const[]){ "X=ffff", "D=0005", "CC=52", NULL },
+    };
+
+    turbo9_isa_run(&c);
+}
+
+/* $15 is EMULS on Turbo9; a 6809 must still halt. */
+static void test_m6809_emuls_halts(void)
+{
+    static const uint8_t code[] = {
+        0x15,
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("m6809");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8000", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8000"));
+    qtest_quit(s);
+}
+
+/*
+ * 6309 ldw #$8000; sexw on turbo9: ldw is illegal, so halt at $8000.
+ * Must not produce the 6309 SEXW result D=$FFFF.
+ */
+static void test_turbo9_ldw_sexw_not_6309(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0x86, 0x80, 0x00, /* ldw #$8000 */
+        0x14,                   /* sexw on 6309 / emul on turbo9 */
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("turbo9");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8000", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8000"));
+    g_assert_nonnull(strstr(regs, "D=0000"));
+    g_assert_null(strstr(regs, "D=ffff"));
+    g_assert_null(strstr(regs, "W="));
+    qtest_quit(s);
+}
+
+/* $113D is LDMD on a 6309; Turbo9 must halt, not trap. Dump stays 6809-shaped. */
+static void test_turbo9_ldmd_halts(void)
+{
+    static const uint8_t code[] = {
+        0x10, 0xce, 0x40, 0x00, /* lds #$4000 */
+        0x11, 0x3d, 0x01,       /* ldmd #$01 (illegal on turbo9) */
+        0x20, 0xfe,
+    };
+    QTestState *s;
+    g_autofree char *regs = NULL;
+    bool local_ran = false;
+
+    s = isa_vm_cpu("turbo9");
+    isa_load(s, &local_ran, code, sizeof(code),
+             NULL, 0, NULL, 0, NULL, 0, false);
+    qtest_qmp_assert_success(s, "{'execute': 'cont'}");
+    regs = wait_registers(s, "PC=8004", CASE_TIMEOUT_MS);
+    g_assert_nonnull(strstr(regs, "PC=8004"));
+    g_assert_nonnull(strstr(regs, "S=4000"));
+    g_assert_null(strstr(regs, "MD="));
+    qtest_quit(s);
+}
+
 static void test_cwai_irq(void)
 {
     /* lds #$4000; enable GIME IRQ; load regs; cwai #$af; incb */
@@ -1398,8 +1729,10 @@ int main(int argc, char **argv)
     rom_path = write_stub_rom();
     qts = isa_vm_new("coco3", "tcg,one-insn-per-tb=on");
     qts_hd6309 = isa_vm_cpu("hd6309");
+    qts_turbo9 = isa_vm_cpu("turbo9");
     ran = false;
     ran_hd6309 = false;
+    ran_turbo9 = false;
 
     for (i = 0; i < ARRAY_SIZE(isa_cases); i++) {
         char *path = g_strdup_printf("/isa/%s", isa_cases[i].name);
@@ -1415,6 +1748,12 @@ int main(int argc, char **argv)
         }
         path = g_strdup_printf("/isa/hd6309_compat/%s", isa_cases[i].name);
         qtest_add_data_func(path, &isa_cases[i], test_isa_case_hd6309);
+        g_free(path);
+    }
+    for (i = 0; i < ARRAY_SIZE(isa_cases); i++) {
+        char *path = g_strdup_printf("/isa/turbo9_compat/%s", isa_cases[i].name);
+
+        qtest_add_data_func(path, &isa_cases[i], test_isa_case_turbo9);
         g_free(path);
     }
     qtest_add_func("/isa/invalid_indexed_87", test_invalid_indexed);
@@ -1459,6 +1798,21 @@ int main(int argc, char **argv)
     qtest_add_func("/isa/hd6309_div0", test_hd6309_div0);
     qtest_add_func("/isa/m6809_sexw_halts", test_m6809_sexw_halts);
     qtest_add_func("/isa/m6809_ldmd_halts", test_m6809_ldmd_halts);
+    qtest_add_func("/isa/m6809_emuls_halts", test_m6809_emuls_halts);
+    qtest_add_func("/isa/turbo9_emul", test_turbo9_emul);
+    qtest_add_func("/isa/turbo9_emuls", test_turbo9_emuls);
+    qtest_add_func("/isa/turbo9_idiv", test_turbo9_idiv);
+    qtest_add_func("/isa/turbo9_idivs", test_turbo9_idivs);
+    qtest_add_func("/isa/turbo9_ediv", test_turbo9_ediv);
+    qtest_add_func("/isa/turbo9_edivs", test_turbo9_edivs);
+    qtest_add_func("/isa/turbo9_fdiv", test_turbo9_fdiv);
+    qtest_add_func("/isa/turbo9_idiv_div0", test_turbo9_idiv_div0);
+    qtest_add_func("/isa/turbo9_ediv_overflow", test_turbo9_ediv_overflow);
+    qtest_add_func("/isa/turbo9_edivs_overflow", test_turbo9_edivs_overflow);
+    qtest_add_func("/isa/turbo9_idivs_overflow", test_turbo9_idivs_overflow);
+    qtest_add_func("/isa/turbo9_fdiv_overflow", test_turbo9_fdiv_overflow);
+    qtest_add_func("/isa/turbo9_ldw_sexw_not_6309", test_turbo9_ldw_sexw_not_6309);
+    qtest_add_func("/isa/turbo9_ldmd_halts", test_turbo9_ldmd_halts);
     qtest_add_func("/isa/cwai_irq", test_cwai_irq);
     qtest_add_func("/isa/firq_short_frame", test_firq_short_frame);
     qtest_add_func("/isa/sync_masked_falls_through", test_sync_masked);
@@ -1468,6 +1822,7 @@ int main(int argc, char **argv)
 
     qtest_quit(qts);
     qtest_quit(qts_hd6309);
+    qtest_quit(qts_turbo9);
     unlink(rom_path);
     g_free(rom_path);
     return ret;
