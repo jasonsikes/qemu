@@ -123,9 +123,11 @@ bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
 bool m6809_load_dos_boottrack(M6809CPU *cpu, MemoryRegion *ram,
                               hwaddr ram_offset, BlockBackend *blk)
 {
+    uint8_t lsn0[COCO3_SECTOR_SIZE];
     uint8_t buf[OS9_BOOTTRACK_SIZE];
-    int64_t off = (int64_t)COCO3_DOS_LSN * COCO3_SECTOR_SIZE;
-    int64_t disk_len;
+    uint16_t spt;
+    unsigned sides;
+    int64_t off, disk_len;
 
     if (!blk) {
         error_report("coco3: DOS boot needs a floppy on the first -drive");
@@ -136,6 +138,26 @@ bool m6809_load_dos_boottrack(M6809CPU *cpu, MemoryRegion *ram,
         error_report("coco3: could not size the floppy for DOS boot");
         return false;
     }
+    if (disk_len < COCO3_SECTOR_SIZE) {
+        error_report("coco3: floppy image is too small");
+        return false;
+    }
+    if (blk_pread(blk, 0, COCO3_SECTOR_SIZE, lsn0, 0) < 0) {
+        error_report("coco3: failed to read LSN 0 for DOS boot");
+        return false;
+    }
+
+    /* LSN of track 34 = track * sides * sectors/track. */
+    spt = ((uint16_t)lsn0[OS9_DD_SPT] << 8) | lsn0[OS9_DD_SPT + 1];
+    if (spt == 0) {
+        spt = lsn0[OS9_DD_TKS];
+    }
+    if (spt == 0) {
+        spt = COCO3_SECS_PER_TRACK;
+    }
+    sides = (lsn0[OS9_DD_FMT] & OS9_DD_FMT_SIDES) ? 2 : 1;
+    off = (int64_t)COCO3_DOS_TRACK * spt * sides * COCO3_SECTOR_SIZE;
+
     if (disk_len < off + OS9_BOOTTRACK_SIZE) {
         error_report("coco3: floppy is too small for track 34 (DOS boot)");
         return false;
