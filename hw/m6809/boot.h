@@ -16,7 +16,7 @@
 
 typedef struct BlockBackend BlockBackend;
 
-/* -kernel load address, size, and entry. Disk BASIC DOS copies track 34
+/* -kernel load address, size, and entry. Disk BASIC DOS copies track 34. */
 #define OS9_BOOTTRACK_ADDR   0x2600
 #define OS9_BOOTTRACK_SIZE   0x1200
 #define OS9_BOOTTRACK_ENTRY  0x2602

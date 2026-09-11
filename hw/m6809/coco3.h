@@ -91,6 +91,7 @@ DECLARE_INSTANCE_CHECKER(Coco3State, COCO3, TYPE_COCO3)
 #define VDG_FF22_CSS            0x08
 #define VDG_FF22_GM             (VDG_FF22_GM2 | VDG_FF22_GM1 | VDG_FF22_GM0)
 #define VDG_FF22_PMODE4         (VDG_FF22_AG | VDG_FF22_GM)
+#define VDG_FF22_VIDEO          (VDG_FF22_AG | VDG_FF22_GM | VDG_FF22_CSS)
 
 #define SAM_V_MASK              0x07
 #define SAM_V_PMODE4            0x06 /* V2 V1 V0 = 110: 256×192×2 */
@@ -148,6 +149,7 @@ struct Coco3State {
     QemuConsole *con;
     bool video_dirty;
     bool video_unimp_logged;
+    uint8_t vdg_ff22;           /* last $FF22 bits that affect VDG scanout */
 
     uint8_t vmode;
     uint8_t vres;

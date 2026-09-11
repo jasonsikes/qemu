@@ -10,6 +10,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
+#include "system/memory.h"
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
 #include "coco3_video.h"
@@ -430,6 +431,69 @@ static void coco3_video_log_unimp(Coco3State *s)
                   coco3_vdg_ff22(s));
 }
 
+static int coco3_src_rows(int lines, int lpr)
+{
+    if (lpr < 1) {
+        lpr = 1;
+    }
+    return (lines + lpr - 1) / lpr;
+}
+
+static bool coco3_vram_dirty(Coco3State *s, uint32_t base, uint32_t size)
+{
+    DirtyBitmapSnapshot *snap;
+    bool dirty;
+
+    if (!size) {
+        return false;
+    }
+    base &= COCO3_RAM_SIZE - 1;
+    if (size > COCO3_RAM_SIZE - base) {
+        snap = memory_region_snapshot_and_clear_dirty(s->ram, 0, COCO3_RAM_SIZE,
+                                                      DIRTY_MEMORY_VGA);
+        dirty = memory_region_snapshot_get_dirty(s->ram, snap, 0,
+                                                 COCO3_RAM_SIZE);
+    } else {
+        snap = memory_region_snapshot_and_clear_dirty(s->ram, base, size,
+                                                      DIRTY_MEMORY_VGA);
+        dirty = memory_region_snapshot_get_dirty(s->ram, snap, base, size);
+    }
+    g_free(snap);
+    return dirty;
+}
+
+static bool coco3_scanout_dirty(Coco3State *s, bool gfx, bool text,
+                                bool vdg_text, bool vdg_gfx, int cols)
+{
+    uint32_t base, size;
+    int lpr, lpf, bpl, bpp, hscale, pal0;
+
+    if (gfx) {
+        lpr = coco3_video_lpr(s);
+        lpf = coco3_video_lpf(s);
+        bpl = coco3_gime_bpl(s);
+        base = coco3_video_base(s);
+        size = (uint32_t)coco3_src_rows(lpf, lpr) * bpl;
+    } else if (text) {
+        lpr = coco3_video_lpr(s);
+        lpf = coco3_video_lpf(s);
+        base = coco3_video_base(s);
+        size = (uint32_t)coco3_src_rows(lpf, lpr) * cols *
+               ((s->vres & GIME_VRES_CRES_ATTR) ? 2 : 1);
+    } else if (vdg_text) {
+        base = coco3_vdg_base(s);
+        size = (uint32_t)coco3_src_rows(VDG_HEIGHT, VDG_CELL_H) * VDG_TEXT_COLS;
+    } else if (vdg_gfx) {
+        coco3_vdg_gfx_params(coco3_vdg_ff22(s), &bpl, &bpp, &hscale, &pal0);
+        base = coco3_vdg_base(s);
+        size = (uint32_t)coco3_src_rows(VDG_HEIGHT, coco3_vdg_gfx_lpr(s)) * bpl;
+    } else {
+        return s->video_dirty;
+    }
+
+    return s->video_dirty || coco3_vram_dirty(s, base, size);
+}
+
 static void coco3_fill_surface(DisplaySurface *surface, uint32_t pixel)
 {
     uint8_t *d = surface_data(surface);
@@ -695,11 +759,12 @@ static bool coco3_gfx_update(void *opaque)
     bool text = coco3_video_is_gime_text(s, &cols);
     bool vdg_text = coco3_video_is_vdg_text(s);
     bool vdg_gfx = coco3_video_is_vdg_gfx(s);
+    bool dirty = coco3_scanout_dirty(s, gfx, text, vdg_text, vdg_gfx, cols);
 
-    if (!gfx && !text && !vdg_text && !vdg_gfx && !s->video_dirty) {
+    s->video_dirty = false;
+    if (!dirty) {
         return true;
     }
-    s->video_dirty = false;
 
     surface = qemu_console_surface(s->con);
     if (!surface || surface_bits_per_pixel(surface) != 32) {
@@ -736,6 +801,8 @@ void coco3_video_init(Coco3State *s)
 {
     s->con = qemu_graphic_console_create(DEVICE(s), 0, &coco3_gfx_ops, s);
     qemu_console_resize(s->con, COCO3_DISPLAY_WIDTH, COCO3_DISPLAY_HEIGHT);
+    memory_region_set_log(s->ram, true, DIRTY_MEMORY_VGA);
+    s->vdg_ff22 = 0;
     s->video_dirty = true;
 }
 
@@ -753,6 +820,7 @@ void coco3_video_reset(Coco3State *s)
     for (i = 0; i < GIME_PALETTE_COUNT; i++) {
         s->palette_rgb[i] = gime_rgb_to_pixel(s->palette[i]);
     }
+    s->vdg_ff22 = s->pia1.b.data & VDG_FF22_VIDEO;
     s->video_unimp_logged = false;
     coco3_video_invalidate(s);
 }
@@ -760,6 +828,9 @@ void coco3_video_reset(Coco3State *s)
 void coco3_video_set_palette(Coco3State *s, unsigned idx, uint8_t val)
 {
     val &= GIME_COLOR_MASK;
+    if (s->palette[idx] == val) {
+        return;
+    }
     s->palette[idx] = val;
     s->palette_rgb[idx] = gime_rgb_to_pixel(val);
     coco3_video_invalidate(s);

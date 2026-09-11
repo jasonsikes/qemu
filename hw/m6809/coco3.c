@@ -318,6 +318,14 @@ static uint64_t coco3_gime_read(void *opaque, hwaddr addr, unsigned size)
     }
 }
 
+static void coco3_set_video_reg(Coco3State *s, uint8_t *reg, uint8_t data)
+{
+    if (*reg != data) {
+        *reg = data;
+        coco3_video_invalidate(s);
+    }
+}
+
 static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
                              unsigned size)
 {
@@ -407,36 +415,28 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
         coco3_gime_update_irqs(s);
         break;
     case GIME_R_VMODE:
-        s->vmode = data;
-        coco3_video_invalidate(s);
+        coco3_set_video_reg(s, &s->vmode, data);
         break;
     case GIME_R_VRES:
-        s->vres = data;
-        coco3_video_invalidate(s);
+        coco3_set_video_reg(s, &s->vres, data);
         break;
     case GIME_R_BORDER:
-        s->border = data & GIME_COLOR_MASK;
-        coco3_video_invalidate(s);
+        coco3_set_video_reg(s, &s->border, data & GIME_COLOR_MASK);
         break;
     case GIME_R_VBANK:
         s->vbank = data;
-        coco3_video_invalidate(s);
         break;
     case GIME_R_VSCROLL:
         s->vscroll = data;
-        coco3_video_invalidate(s);
         break;
     case GIME_R_VOFF_MSB:
-        s->voff_msb = data;
-        coco3_video_invalidate(s);
+        coco3_set_video_reg(s, &s->voff_msb, data);
         break;
     case GIME_R_VOFF_LSB:
-        s->voff_lsb = data;
-        coco3_video_invalidate(s);
+        coco3_set_video_reg(s, &s->voff_lsb, data);
         break;
     case GIME_R_HOFF:
-        s->hoff = data;
-        coco3_video_invalidate(s);
+        coco3_set_video_reg(s, &s->hoff, data);
         break;
     default:
         break;
@@ -631,7 +631,9 @@ static void coco3_keyboard_column(void *opaque, int n G_GNUC_UNUSED,
 static void coco3_vdg_mode(void *opaque, int n G_GNUC_UNUSED,
                            int level G_GNUC_UNUSED)
 {
-    coco3_video_invalidate(opaque);
+    Coco3State *s = opaque;
+
+    coco3_set_video_reg(s, &s->vdg_ff22, s->pia1.b.data & VDG_FF22_VIDEO);
 }
 
 /* PIA0 CA2/CB2 select the axis; PIA1 PA2–PA7 are the DAC. */
@@ -788,7 +790,6 @@ static void coco3_frame_tick(void *opaque)
     qemu_irq_raise(s->pia0_cb1);
     qemu_irq_lower(s->pia0_cb1);
     coco3_keyboard_hold_tick(s);
-    coco3_video_invalidate(s);
     if (s->fake_cart_firq) {
         qemu_irq_raise(s->cart);
         qemu_irq_lower(s->cart);
