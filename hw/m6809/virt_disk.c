@@ -1,6 +1,6 @@
 /*
  * CoCo 3 virt disk
- * Unit 0 is /D0, unit 1 is /DD.
+ * Unit 0 is floppy drive, unit 1 is hard drive.
  *
  * Copyright (c) 2026 Jason G. Sikes
  *

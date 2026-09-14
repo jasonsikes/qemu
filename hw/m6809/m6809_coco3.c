@@ -124,7 +124,7 @@ static void coco3_machine_class_init(ObjectClass *oc, const void *data)
     mc->no_floppy = 1;
     mc->no_cdrom = 1;
     mc->no_parallel = 1;
-    /* First -drive is /D0 (DOS loads track 34). Index 1 is /DD. */
+    /* First -drive is floppy drive (DOS loads track 34). Index 1 is hard drive. */
     mc->block_default_type = IF_NONE;
 }
 
