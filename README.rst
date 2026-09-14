@@ -1,3 +1,114 @@
+=========================================
+QEMU for NitrOS-9 and Turbo9/M6809/HD6309
+=========================================
+
+*Turbo9* is a 16-bit CPU in development that “balances high performance against
+a small silicon area and low power consumption. The instruction set is a proper superset
+of the 6809 instruction set. The documentation can be found at
+`<https://github.com/turbo9team/turbo9>`_.
+
+The hardware reference platform is the Color Computer 3,
+since it is the 6809 system I am most familiar with. I have implemented most of
+the hardware for the Color Computer 3 in QEMU. A major exception is
+the WD1773 floppy disk controller. Instead, I have implemented a more efficient
+QEMU-specific disk controller virtual device.
+
+*NitrOS-9* is a community-based distribution of the Microware OS-9 operating
+system for the 6809 CPU. NitrOS-9 can be found at
+`<https://github.com/n6il/nitros9>`_.
+
+BUILDING AND RUNNING QEMU FOR NitrOS-9 AND TURBO9
+=================================================
+
+To build and run QEMU for Turbo9, you need to
+acquire system software for the target machine.
+
+First, you need to download and build my fork of QEMU.
+
+.. code-block:: shell
+
+  $ git clone https://github.com/jasonsikes/qemu.git
+  $ cd qemu
+  $ ./configure --target-list=m6809-softmmu
+  $ ninja -C build qemu-system-m6809
+
+Second, you will need to download either the NitrOS-9 operating system (highly recommended)
+or the Color Computer 3 system software ROMs (much less recommended).
+
+BUILDING NitrOS-9 AND RUNNING IT IN QEMU
+========================================
+
+To build NitrOS-9 for qemu-system-m6809, you need to use my fork of NitrOS-9 which
+has the drivers for QEMU's disk, clock, mouse, and serial terminal.
+
+.. code-block:: shell
+
+  $ cd .. # Leave QEMU directory
+  $ git clone https://github.com/jasonsikes/nitros9.git
+  $ cd nitros9
+  $ export NITROS9DIR="$PWD"
+  $ less README.md    # Particularly the section on "Building" which explains how to install LWTOOLS and ToolShed.
+  $ cd recipes/coco3/floppy_qemu
+  $ make
+
+This will leave you with a bootable floppy disk image, `l2_coco3_qemu.dsk` in the
+`$NITROS9DIR/recipes/coco3/floppy_qemu` directory.
+
+Now we can use it to boot our virtual machine.
+
+.. code-block:: shell
+
+  $ cd ../qemu # Back to the QEMU directory, wherever that may be.
+  $ build/qemu-system-m6809 -M coco3 \
+    -drive "file=$NITROS9DIR/recipes/coco3/floppy_qemu/l2_coco3_qemu.dsk,format=raw" \
+    -serial stdio
+
+You should see a QEMU window where NitrOS-9 boots up and presents a shell prompt. You can exit
+QEMU by typing Ctrl-C in the terminal where you started QEMU.
+
+You can also spawn a shell prompt in the terminal where you started QEMU by typing in the
+graphical CoCo3 guest window:
+
+.. code-block:: shell
+
+  shell i=/t0&
+
+Again, be aware that typing Ctrl-C in the terminal where you started QEMU will exit QEMU.
+
+Bonus command-line options:
+
+* -drive:  use this to add a hard drive image to the virtual machine. The first "-drive" argument is the floppy
+image (/D0), the second "-drive" argument is the hard drive image (/H0). Remember that the floppy image must
+be bootable.
+* -cpu:  use this to specify the CPU type. The default is "m6809". You can also specify "hd6309" or "turbo9".
+
+Finally, the "Clear" key is F12.
+
+RUNNING COCO3 ROM IN QEMU
+=========================
+
+To run the Color Computer 3 system software ROM in QEMU, you will need to download
+the Color Computer 3 system software ROM images. You can find them at
+`<https://colorcomputerarchive.com/repo/ROMs/MAME-MESS/coco3.zip>`_.
+
+Unzip the file and you will see the following file:
+
+* `coco3.rom`     # Color BASIC and Extended Color BASIC ROM
+
+.. code-block:: shell
+
+  $ build/qemu-system-m6809 -M coco3 \
+   -bios /path/to/coco3.rom
+
+
+Special Thanks
+==============
+
+A great big THANK-YOU to Florian Göhler for his write-up on `How to add a new architecture to QEMU <https://fgoehler.com/blog/adding-a-new-architecture-to-qemu-01/>`_.
+I don't know how I would have done this without his documentation.
+
+That's it for the M6809-specific README portion. Now for the QEMU README.
+
 ===========
 QEMU README
 ===========

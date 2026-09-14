@@ -1,0 +1,171 @@
+/*
+ * M6809 / Color Computer firmware loader helpers
+ *
+ * Copyright (c) 2025 Jason G. Sikes
+ *
+ * This work is licensed under the terms of the GNU GPLv2 or later.
+ * See the COPYING file in the top-level directory.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+#include "qemu/osdep.h"
+#include "qemu/datadir.h"
+#include "system/memory.h"
+#include "system/physmem.h"
+#include "system/reset.h"
+#include "system/block-backend.h"
+#include "hw/core/loader.h"
+#include "boot.h"
+#include "qemu/error-report.h"
+
+static void m6809_boottrack_reset(void *opaque)
+{
+    cpu_set_pc(CPU(opaque), OS9_BOOTTRACK_ENTRY);
+}
+
+bool m6809_load_firmware(MemoryRegion *program_mr, const char *firmware)
+{
+    g_autofree char *filename = NULL;
+    int bytes_loaded;
+
+    filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, firmware);
+    if (filename == NULL) {
+        error_report("Cannot find firmware image '%s'", firmware);
+        return false;
+    }
+
+    bytes_loaded = load_image_mr(filename, program_mr);
+    if (bytes_loaded < 0) {
+        error_report("Unable to load firmware image %s as raw binary",
+                     firmware);
+        return false;
+    }
+
+    if (load_image_size(filename, memory_region_get_ram_ptr(program_mr),
+                        memory_region_size(program_mr)) < 0) {
+        error_report("Unable to load firmware image %s as raw binary",
+                     firmware);
+        return false;
+    }
+
+    return true;
+}
+
+static bool m6809_install_boottrack(M6809CPU *cpu, MemoryRegion *ram,
+                                    hwaddr ram_offset, const uint8_t *data,
+                                    size_t len, const char *what)
+{
+    size_t i;
+    uint8_t *ram_ptr;
+    static const uint8_t coco3_vectors[] = {
+        0xfe, 0xee, /* $FFEE DIV0 */
+        0xfe, 0xee, /* $FFF0 illegal */
+        0xfe, 0xee, /* $FFF2 SWI3 */
+        0xfe, 0xf1, /* $FFF4 SWI2 */
+        0xfe, 0xf4, /* $FFF6 FIRQ */
+        0xfe, 0xf7, /* $FFF8 IRQ  */
+        0xfe, 0xfa, /* $FFFA SWI  */
+        0xfe, 0xfd, /* $FFFC NMI  */
+        OS9_BOOTTRACK_ENTRY >> 8,
+        OS9_BOOTTRACK_ENTRY & 0xff, /* $FFFE RESET */
+    };
+
+    if (len == 0) {
+        error_report("coco3: %s is empty", what);
+        return false;
+    }
+    if (len > OS9_BOOTTRACK_SIZE) {
+        error_report("coco3: %s is %zu bytes; max is %d",
+                     what, len, OS9_BOOTTRACK_SIZE);
+        return false;
+    }
+    if (len != OS9_BOOTTRACK_SIZE) {
+        warn_report("coco3: %s is %zu bytes; expected %d",
+                    what, len, OS9_BOOTTRACK_SIZE);
+    }
+    if (len >= 2 && (data[0] != 'O' || data[1] != 'S')) {
+        error_report("coco3: %s does not start with 'OS'", what);
+        return false;
+    }
+    if (ram_offset + len > memory_region_size(ram)) {
+        error_report("coco3: boot track does not fit in RAM");
+        return false;
+    }
+
+    ram_ptr = memory_region_get_ram_ptr(ram);
+    memcpy(ram_ptr + ram_offset, data, len);
+
+    for (i = 0; i < sizeof(coco3_vectors); i++) {
+        physical_memory_write(COCO3_VEC_TABLE + i, &coco3_vectors[i], 1);
+    }
+
+    cpu_set_pc(CPU(cpu), OS9_BOOTTRACK_ENTRY);
+    qemu_register_reset(m6809_boottrack_reset, cpu);
+    return true;
+}
+
+bool m6809_load_boottrack(M6809CPU *cpu, MemoryRegion *ram, hwaddr ram_offset,
+                          const char *filename)
+{
+    g_autofree char *data = NULL;
+    gsize len;
+    g_autoptr(GError) gerr = NULL;
+
+    if (!g_file_get_contents(filename, &data, &len, &gerr)) {
+        error_report("coco3: could not read boot track '%s': %s",
+                     filename, gerr->message);
+        return false;
+    }
+    return m6809_install_boottrack(cpu, ram, ram_offset,
+                                   (const uint8_t *)data, len, filename);
+}
+
+bool m6809_load_dos_boottrack(M6809CPU *cpu, MemoryRegion *ram,
+                              hwaddr ram_offset, BlockBackend *blk)
+{
+    uint8_t lsn0[COCO3_SECTOR_SIZE];
+    uint8_t buf[OS9_BOOTTRACK_SIZE];
+    uint16_t spt;
+    unsigned sides;
+    int64_t off, disk_len;
+
+    if (!blk) {
+        error_report("coco3: DOS boot needs a floppy on the first -drive");
+        return false;
+    }
+    disk_len = blk_getlength(blk);
+    if (disk_len < 0) {
+        error_report("coco3: could not size the floppy for DOS boot");
+        return false;
+    }
+    if (disk_len < COCO3_SECTOR_SIZE) {
+        error_report("coco3: floppy image is too small");
+        return false;
+    }
+    if (blk_pread(blk, 0, COCO3_SECTOR_SIZE, lsn0, 0) < 0) {
+        error_report("coco3: failed to read LSN 0 for DOS boot");
+        return false;
+    }
+
+    /* LSN of track 34 = track * sides * sectors/track. */
+    spt = ((uint16_t)lsn0[OS9_DD_SPT] << 8) | lsn0[OS9_DD_SPT + 1];
+    if (spt == 0) {
+        spt = lsn0[OS9_DD_TKS];
+    }
+    if (spt == 0) {
+        spt = COCO3_SECS_PER_TRACK;
+    }
+    sides = (lsn0[OS9_DD_FMT] & OS9_DD_FMT_SIDES) ? 2 : 1;
+    off = (int64_t)COCO3_DOS_TRACK * spt * sides * COCO3_SECTOR_SIZE;
+
+    if (disk_len < off + OS9_BOOTTRACK_SIZE) {
+        error_report("coco3: floppy is too small for track 34 (DOS boot)");
+        return false;
+    }
+    if (blk_pread(blk, off, OS9_BOOTTRACK_SIZE, buf, 0) < 0) {
+        error_report("coco3: failed to read track 34 for DOS boot");
+        return false;
+    }
+    return m6809_install_boottrack(cpu, ram, ram_offset, buf,
+                                   OS9_BOOTTRACK_SIZE, "DOS track 34");
+}

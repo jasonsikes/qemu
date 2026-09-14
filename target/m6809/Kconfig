@@ -1,0 +1,2 @@
+config M6809
+    bool

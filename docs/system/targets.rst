@@ -19,6 +19,7 @@ Contents:
    target-arm
    target-avr
    target-loongarch
+   target-m6809
    target-m68k
    target-mips
    target-or1k

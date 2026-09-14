@@ -46,6 +46,10 @@ depending on the guest architecture.
     - :ref:`Yes<ColdFire-System-emulator>`
     - Yes
     - Motorola 68000 variants and ColdFire
+  * - m6809
+    - :ref:`Yes<M6809-System-emulator>`
+    - No
+    - Motorola 6809 CPU and derivatives, including Turbo9 and Hitachi 6809.
   * - Microblaze
     - Yes
     - Yes

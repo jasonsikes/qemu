@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!-- Copyright (c) 2026 Jason G. Sikes
+
+     Copying and distribution of this file, with or without modification,
+     are permitted in any medium without royalty provided the copyright
+     notice and this notice are preserved.  -->
+
+<!DOCTYPE feature SYSTEM "gdb-target.dtd">
+<feature name="org.qemu.gdb.m6809.core">
+  <reg name="d" bitsize="16" type="int" regnum="0"/>
+  <reg name="x" bitsize="16" type="data_ptr"/>
+  <reg name="y" bitsize="16" type="data_ptr"/>
+  <reg name="u" bitsize="16" type="data_ptr"/>
+  <reg name="s" bitsize="16" type="data_ptr"/>
+  <reg name="pc" bitsize="16" type="code_ptr"/>
+  <reg name="a" bitsize="8" type="int"/>
+  <reg name="b" bitsize="8" type="int"/>
+  <reg name="dp" bitsize="8" type="int"/>
+  <flags id="cc_flags" size="1">
+    <field name="C" start="0" end="0"/>
+    <field name="V" start="1" end="1"/>
+    <field name="Z" start="2" end="2"/>
+    <field name="N" start="3" end="3"/>
+    <field name="I" start="4" end="4"/>
+    <field name="H" start="5" end="5"/>
+    <field name="F" start="6" end="6"/>
+    <field name="E" start="7" end="7"/>
+  </flags>
+  <reg name="cc" bitsize="8" type="cc_flags"/>
+  <reg name="e" bitsize="8" type="int"/>
+  <reg name="f" bitsize="8" type="int"/>
+  <reg name="w" bitsize="16" type="int"/>
+  <reg name="v" bitsize="16" type="int"/>
+  <reg name="md" bitsize="8" type="int"/>
+</feature>

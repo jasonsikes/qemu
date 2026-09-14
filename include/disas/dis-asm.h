@@ -211,6 +211,8 @@ enum bfd_architecture
 #define bfd_mach_arc_base 0
   bfd_arch_m32r,       /* Mitsubishi M32R/D */
 #define bfd_mach_m32r          0  /* backwards compatibility */
+  bfd_arch_m6809,      /* Motorola 6809 */
+#define bfd_mach_m6809         0
   bfd_arch_mn10200,    /* Matsushita MN10200 */
   bfd_arch_mn10300,    /* Matsushita MN10300 */
   bfd_arch_avr,        /* AVR microcontrollers */
