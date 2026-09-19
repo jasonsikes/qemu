@@ -12,6 +12,7 @@ m6809_ss.add(when: 'CONFIG_COCO3', if_true: files(
   'virt_cons.c',
   'virt_rtc.c',
   'wd1773.c',
+  'coco3_fdc.c',
   'm6809_coco3.c',
 ))
 

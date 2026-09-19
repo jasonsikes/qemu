@@ -44,7 +44,12 @@
 
 static bool wd1773_ready(const WD1773State *s)
 {
-    return s->blk != NULL;
+    return s->blk != NULL && s->ready;
+}
+
+void wd1773_set_ready(WD1773State *s, bool ready)
+{
+    s->ready = ready;
 }
 
 static void wd1773_set_intrq(WD1773State *s, bool level)
@@ -433,6 +438,7 @@ static void wd1773_reset_hold(Object *obj, ResetType type)
     s->record_type = false;
     s->wr_protect = false;
     s->xfer_n = 0;
+    s->ready = false;
     wd1773_set_drq(s, false);
     wd1773_set_intrq(s, false);
 }
@@ -483,6 +489,7 @@ static const VMStateDescription vmstate_wd1773 = {
         VMSTATE_BOOL(wr_protect, WD1773State),
         VMSTATE_BOOL(intrq, WD1773State),
         VMSTATE_BOOL(drq, WD1773State),
+        VMSTATE_BOOL(ready, WD1773State),
         VMSTATE_UINT8_ARRAY(xfer, WD1773State, WD1773_SECSIZE),
         VMSTATE_UINT32(xfer_i, WD1773State),
         VMSTATE_UINT32(xfer_n, WD1773State),

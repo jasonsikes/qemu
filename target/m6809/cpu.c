@@ -22,6 +22,7 @@
 #include "qemu/qemu-print.h"
 #include "qapi/error.h"
 #include "cpu.h"
+#include "hw/core/cpu.h"
 #include "migration/vmstate.h"
 #include "exec/cputlb.h"
 #include "exec/page-protection.h"
@@ -141,8 +142,11 @@ static void m6809_cpu_realize(DeviceState *dev, Error **errp)
 {
     CPUState *cs = CPU(dev);
     M6809CPUClass *mcc = M6809_CPU_GET_CLASS(dev);
+    Error *local_err = NULL;
 
-    if (!cpu_common_realize(cs, errp)) {
+    cpu_exec_realizefn(cs, &local_err);
+    if (local_err != NULL) {
+        error_propagate(errp, local_err);
         return;
     }
 

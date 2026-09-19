@@ -20,7 +20,7 @@
 #include "virt_disk.h"
 #include "virt_cons.h"
 #include "virt_rtc.h"
-#include "wd1773.h"
+#include "coco3_fdc.h"
 #include "coco3_cart.h"
 
 typedef struct QemuInputHandlerState QemuInputHandlerState;
@@ -130,7 +130,7 @@ struct Coco3State {
     Coco3VirtDiskState vdisk;
     Coco3VirtConsState vcons;
     Coco3VirtRtcState vrtc;
-    WD1773State wd1773;
+    Coco3FdcState fdc;
 
     uint8_t init0;
     uint8_t init1;

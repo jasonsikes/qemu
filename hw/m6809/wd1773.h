@@ -57,10 +57,13 @@ struct WD1773State {
     bool wr_protect;
     bool intrq;
     bool drq;
+    bool ready;                 /* READY pin, driven by the disk-cart latch */
 
     uint8_t xfer[WD1773_SECSIZE];
     uint32_t xfer_i;
     uint32_t xfer_n;
     bool xfer_write;
 };
+
+void wd1773_set_ready(WD1773State *s, bool ready);
 #endif /* HW_M6809_WD1773_H */
