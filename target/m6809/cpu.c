@@ -141,11 +141,8 @@ static void m6809_cpu_realize(DeviceState *dev, Error **errp)
 {
     CPUState *cs = CPU(dev);
     M6809CPUClass *mcc = M6809_CPU_GET_CLASS(dev);
-    Error *local_err = NULL;
 
-    cpu_exec_realizefn(cs, &local_err);
-    if (local_err != NULL) {
-        error_propagate(errp, local_err);
+    if (!cpu_common_realize(cs, errp)) {
         return;
     }
 

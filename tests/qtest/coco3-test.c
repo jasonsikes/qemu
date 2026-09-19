@@ -488,6 +488,214 @@ static void test_cart_rom(void)
     g_free(cart);
 }
 
+#define WD1773_CMD     0xff48
+#define WD1773_TRACK   0xff49
+#define WD1773_SECTOR  0xff4a
+#define WD1773_DATA    0xff4b
+#define WD1773_QOM     "/machine/sys/wd1773"
+
+#define WD1773_ST_BUSY 0x01
+#define WD1773_ST_DRQ  0x02
+#define WD1773_ST_TR00 0x04
+#define WD1773_ST_RNF  0x10
+#define WD1773_ST_NRDY 0x80
+#define WD1773_IRQ_INTRQ 0
+#define WD1773_IRQ_DRQ   1
+
+#define WD1773_DSK_SIZE (35 * 18 * 256)
+
+static char *write_blank_dsk(void)
+{
+    char *path = NULL;
+    GError *err = NULL;
+    int fd;
+
+    fd = g_file_open_tmp("coco3-wd1773-XXXXXX", &path, &err);
+    g_assert_no_error(err);
+    g_assert_cmpint(ftruncate(fd, WD1773_DSK_SIZE), ==, 0);
+    close(fd);
+    return path;
+}
+
+static QTestState *wd1773_vm(const char *dsk)
+{
+    QTestState *s;
+
+    if (dsk) {
+        s = qtest_initf(
+            "-M coco3 -bios %s -drive if=none,index=2,file=%s,format=raw",
+            rom_path, dsk);
+    } else {
+        s = qtest_initf("-M coco3 -bios %s", rom_path);
+    }
+    qtest_irq_intercept_out_named(s, WD1773_QOM, "sysbus-irq");
+    return s;
+}
+
+static void test_wd1773_restore(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = wd1773_vm(dsk);
+    uint8_t st;
+
+    qtest_writeb(s, WD1773_CMD, 0x00);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    g_assert_cmphex(st & WD1773_ST_BUSY, ==, 0);
+    g_assert_cmphex(st & WD1773_ST_TR00, ==, WD1773_ST_TR00);
+    g_assert_cmphex(st & WD1773_ST_NRDY, ==, 0);
+    g_assert_cmphex(qtest_readb(s, WD1773_TRACK), ==, 0);
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
+static void test_wd1773_seek(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = wd1773_vm(dsk);
+    uint8_t st;
+
+    qtest_writeb(s, WD1773_DATA, 5);
+    qtest_writeb(s, WD1773_CMD, 0x10);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & WD1773_ST_BUSY, ==, 0);
+    g_assert_cmphex(st & WD1773_ST_TR00, ==, 0);
+    g_assert_cmphex(qtest_readb(s, WD1773_TRACK), ==, 5);
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
+static void test_wd1773_read_no_media(void)
+{
+    QTestState *s = wd1773_vm(NULL);
+    uint8_t st;
+
+    qtest_writeb(s, WD1773_SECTOR, 1);
+    qtest_writeb(s, WD1773_CMD, 0x80);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & WD1773_ST_NRDY, ==, WD1773_ST_NRDY);
+    g_assert_cmphex(st & WD1773_ST_BUSY, ==, 0);
+    g_assert_cmphex(st & WD1773_ST_DRQ, ==, 0);
+
+    qtest_quit(s);
+}
+
+static void test_wd1773_write_read_sector(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = wd1773_vm(dsk);
+    uint8_t st;
+    int i;
+
+    qtest_writeb(s, WD1773_TRACK, 0);
+    qtest_writeb(s, WD1773_SECTOR, 1);
+    qtest_writeb(s, WD1773_CMD, 0xa0);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & WD1773_ST_BUSY, ==, WD1773_ST_BUSY);
+    g_assert_cmphex(st & WD1773_ST_DRQ, ==, WD1773_ST_DRQ);
+
+    for (i = 0; i < 256; i++) {
+        qtest_writeb(s, WD1773_DATA, (uint8_t)(0xa5 ^ i));
+    }
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & (WD1773_ST_BUSY | WD1773_ST_DRQ | WD1773_ST_RNF),
+                    ==, 0);
+
+    qtest_writeb(s, WD1773_CMD, 0x80);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    for (i = 0; i < 256; i++) {
+        g_assert_cmphex(qtest_readb(s, WD1773_DATA), ==, (uint8_t)(0xa5 ^ i));
+    }
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & (WD1773_ST_BUSY | WD1773_ST_DRQ | WD1773_ST_RNF),
+                    ==, 0);
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
+static void test_wd1773_rnf(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = wd1773_vm(dsk);
+    uint8_t st;
+
+    qtest_writeb(s, WD1773_SECTOR, 19);
+    qtest_writeb(s, WD1773_CMD, 0x80);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & WD1773_ST_RNF, ==, WD1773_ST_RNF);
+    g_assert_cmphex(st & WD1773_ST_BUSY, ==, 0);
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
+static void test_wd1773_force_interrupt(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = wd1773_vm(dsk);
+    uint8_t st;
+
+    qtest_writeb(s, WD1773_SECTOR, 1);
+    qtest_writeb(s, WD1773_CMD, 0xa0);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    qtest_writeb(s, WD1773_DATA, 0x11);
+    qtest_writeb(s, WD1773_DATA, 5);
+    qtest_writeb(s, WD1773_CMD, 0x10);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    g_assert_cmphex(qtest_readb(s, WD1773_TRACK), ==, 0);
+
+    qtest_writeb(s, WD1773_CMD, 0xd0);
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_DRQ));
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & WD1773_ST_BUSY, ==, 0);
+
+    qtest_writeb(s, WD1773_CMD, 0xd8);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    qtest_readb(s, WD1773_CMD);
+    g_assert_false(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
+static void test_wd1773_mirror(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = wd1773_vm(dsk);
+
+    qtest_writeb(s, WD1773_TRACK + 4, 7);
+    g_assert_cmphex(qtest_readb(s, WD1773_TRACK), ==, 7);
+    qtest_writeb(s, WD1773_DATA, 3);
+    qtest_writeb(s, WD1773_CMD + 4, 0x10);
+    g_assert_true(qtest_get_irq(s, WD1773_IRQ_INTRQ));
+    g_assert_cmphex(qtest_readb(s, WD1773_TRACK + 4), ==, 3);
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
 static void add_coco3_tests(const char *prefix, const char *cpu)
 {
     char *path;
@@ -530,6 +738,15 @@ int main(int argc, char **argv)
     rom_path = write_stub_rom();
     qtest_add_func("/coco3/bios/reset-vector", test_bios_reset_vector);
     qtest_add_func("/coco3/cart", test_cart_rom);
+    qtest_add_func("/coco3/wd1773/restore", test_wd1773_restore);
+    qtest_add_func("/coco3/wd1773/seek", test_wd1773_seek);
+    qtest_add_func("/coco3/wd1773/read-no-media", test_wd1773_read_no_media);
+    qtest_add_func("/coco3/wd1773/write-read-sector",
+                  test_wd1773_write_read_sector);
+    qtest_add_func("/coco3/wd1773/rnf", test_wd1773_rnf);
+    qtest_add_func("/coco3/wd1773/force-interrupt",
+                  test_wd1773_force_interrupt);
+    qtest_add_func("/coco3/wd1773/mirror", test_wd1773_mirror);
     add_coco3_tests("/coco3", NULL);
     add_coco3_tests("/coco3/hd6309", "hd6309");
     add_coco3_tests("/coco3/turbo9", "turbo9");

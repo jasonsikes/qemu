@@ -43,6 +43,7 @@
 #define COCO3_VCONS_BASE 0xff10 /* virt console */
 #define COCO3_PIA1_BASE  0xff20
 #define COCO3_VDISK_BASE 0xff30 /* virt disk */
+#define COCO3_WD1773_BASE 0xff48 /* WD1773 command/status */
 #define COCO3_VRTC_BASE  0xff50 /* virt RTC */
 
 #define GIME_IO_BASE    0xff90
@@ -935,6 +936,27 @@ static void coco3_realize(DeviceState *dev, Error **errp)
     memory_region_add_subregion_overlap(sysmem, COCO3_VDISK_BASE,
                                         sysbus_mmio_get_region(
                                             SYS_BUS_DEVICE(&s->vdisk), 0),
+                                        COCO3_IO_PRIORITY);
+
+    object_initialize_child(OBJECT(dev), "wd1773", &s->wd1773, TYPE_WD1773);
+    {
+        /*
+         * Keep the FDC off virt-disk's IF_NONE units 0 and 1. qtest
+         * attaches a raw image with -drive if=none,index=2,...
+         */
+        DriveInfo *dinfo = drive_get(IF_NONE, 0, 2);
+
+        if (dinfo) {
+            qdev_prop_set_drive(DEVICE(&s->wd1773), "drive",
+                                blk_by_legacy_dinfo(dinfo));
+        }
+    }
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->wd1773), errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, COCO3_WD1773_BASE,
+                                        sysbus_mmio_get_region(
+                                            SYS_BUS_DEVICE(&s->wd1773), 0),
                                         COCO3_IO_PRIORITY);
 
     object_initialize_child(OBJECT(dev), "virt-rtc", &s->vrtc,
