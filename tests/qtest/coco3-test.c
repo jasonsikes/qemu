@@ -488,6 +488,9 @@ static void test_cart_rom(void)
     g_free(cart);
 }
 
+#define GIME_INIT0     0xff90
+#define GIME_INIT0_SCS 0x04
+
 #define FDC_LATCH      0xff40
 #define WD1773_CMD     0xff48
 #define WD1773_TRACK   0xff49
@@ -529,6 +532,12 @@ static char *write_blank_dsk(void)
     return path;
 }
 
+static void fdc_enable_scs(QTestState *s)
+{
+    qtest_writeb(s, GIME_INIT0,
+                 qtest_readb(s, GIME_INIT0) | GIME_INIT0_SCS);
+}
+
 static QTestState *wd1773_vm(const char *dsk)
 {
     QTestState *s;
@@ -540,6 +549,7 @@ static QTestState *wd1773_vm(const char *dsk)
     } else {
         s = qtest_initf("-M coco3 -bios %s", rom_path);
     }
+    fdc_enable_scs(s);
     qtest_irq_intercept_out_named(s, WD1773_QOM, "sysbus-irq");
     if (dsk) {
         qtest_writeb(s, FDC_LATCH, FDC_SELECT);
@@ -719,6 +729,7 @@ static void test_wd1773_latch_ready(void)
         rom_path, dsk);
     uint8_t st;
 
+    fdc_enable_scs(s);
     qtest_irq_intercept_out_named(s, WD1773_QOM, "sysbus-irq");
     qtest_writeb(s, WD1773_CMD, 0x00);
     st = qtest_readb(s, WD1773_CMD);
@@ -742,6 +753,7 @@ static void test_wd1773_nmi_density_gate(void)
         "-M coco3 -bios %s -drive if=none,index=2,file=%s,format=raw",
         rom_path, dsk);
 
+    fdc_enable_scs(s);
     qtest_irq_intercept_in(s, CPU_QOM);
     qtest_writeb(s, FDC_LATCH, FDC_SELECT);
     qtest_writeb(s, WD1773_CMD, 0x00);
@@ -769,6 +781,7 @@ static void test_wd1773_intrq_clears_halt(void)
         "-M coco3 -bios %s -drive if=none,index=2,file=%s,format=raw",
         rom_path, dsk);
 
+    fdc_enable_scs(s);
     qtest_irq_intercept_out_named(s, FDC_QOM, "sysbus-irq");
     qtest_writeb(s, FDC_LATCH, FDC_SELECT | FDC_HALT);
     g_assert_cmphex(qtest_readb(s, FDC_LATCH) & FDC_HALT, ==, FDC_HALT);
@@ -783,6 +796,26 @@ static void test_wd1773_intrq_clears_halt(void)
     qtest_quit(s);
     unlink(dsk);
     g_free(dsk);
+}
+
+static void test_fdc_scs_gate(void)
+{
+    QTestState *s = qtest_initf("-M coco3 -bios %s", rom_path);
+
+    qtest_writeb(s, FDC_LATCH, FDC_SELECT);
+    g_assert_cmphex(qtest_readb(s, FDC_LATCH), ==, 0);
+
+    fdc_enable_scs(s);
+    qtest_writeb(s, FDC_LATCH, FDC_SELECT);
+    g_assert_cmphex(qtest_readb(s, FDC_LATCH), ==, FDC_SELECT);
+
+    qtest_writeb(s, GIME_INIT0, qtest_readb(s, GIME_INIT0) & ~GIME_INIT0_SCS);
+    g_assert_cmphex(qtest_readb(s, FDC_LATCH), ==, 0);
+
+    fdc_enable_scs(s);
+    g_assert_cmphex(qtest_readb(s, FDC_LATCH), ==, FDC_SELECT);
+
+    qtest_quit(s);
 }
 
 static void add_coco3_tests(const char *prefix, const char *cpu)
@@ -841,6 +874,7 @@ int main(int argc, char **argv)
                   test_wd1773_nmi_density_gate);
     qtest_add_func("/coco3/wd1773/intrq-clears-halt",
                   test_wd1773_intrq_clears_halt);
+    qtest_add_func("/coco3/wd1773/scs-gate", test_fdc_scs_gate);
     add_coco3_tests("/coco3", NULL);
     add_coco3_tests("/coco3/hd6309", "hd6309");
     add_coco3_tests("/coco3/turbo9", "turbo9");

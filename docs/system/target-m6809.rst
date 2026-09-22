@@ -22,6 +22,9 @@ The ``coco3`` machine includes:
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
 - Virt disk at ``$FF30`` (``-drive`` index 0 is NitrOS-9 ``/D0``,
   index 1 is ``/H0``)
+- FD-502 / WD1773 at ``$FF40``–``$FF4F`` (latch + chip). GIME
+  ``INIT0`` bit 2 (SCS) must be set to decode this window; Color BASIC
+  does that. Write Track (``DSKINI``) is unimplemented.
 - Virt RTC at ``$FF50`` (host time; ``-rtc``; NitrOS-9 ``Clock2``)
 - Graphic console: 640×480 window (240-line NTSC raster, each scanline
   doubled). GIME graphics (2/4/16 color at

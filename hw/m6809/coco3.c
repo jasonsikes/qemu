@@ -231,6 +231,12 @@ static void coco3_firq_src(void *opaque, int n, int level)
     qemu_set_irq(s->cpu_firq, s->firq_level[0] | s->firq_level[1]);
 }
 
+/* INIT0.SCS (MC2) enables cartridge I/O at $FF40. Reset leaves it off. */
+static void coco3_scs_update(Coco3State *s)
+{
+    memory_region_set_enabled(&s->fdc.iomem, s->init0 & GIME_INIT0_SCS);
+}
+
 static void coco3_gime_reset(Coco3State *s)
 {
     int i;
@@ -260,6 +266,7 @@ static void coco3_gime_reset(Coco3State *s)
         s->mmu[i] = s->mmu[i + GIME_PAGE_COUNT] = GIME_RESET_BASE_BLOCK + i;
     }
     coco3_mmu_update_all(s);
+    coco3_scs_update(s);
     coco3_gime_update_irqs(s);
     coco3_video_reset(s);
 }
@@ -386,8 +393,11 @@ static void coco3_gime_write(void *opaque, hwaddr addr, uint64_t val,
             uint8_t old = s->init0;
 
             s->init0 = data;
+            if ((old ^ data) & GIME_INIT0_SCS) {
+                coco3_scs_update(s);
+            }
             if ((old ^ data) & ~(GIME_INIT0_IEN | GIME_INIT0_FEN |
-                                 GIME_INIT0_COCO)) {
+                                 GIME_INIT0_COCO | GIME_INIT0_SCS)) {
                 coco3_mmu_update_all(s);
             }
             coco3_gime_update_irqs(s);
@@ -1037,6 +1047,7 @@ static int coco3_post_load(void *opaque, int version_id)
     Coco3State *s = opaque;
 
     coco3_mmu_update_all(s);
+    coco3_scs_update(s);
     coco3_gime_update_irqs(s);
     coco3_video_reset(s);
     memset(s->kb_pressed, 0, sizeof(s->kb_pressed));

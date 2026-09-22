@@ -9,9 +9,9 @@ of the 6809 instruction set. The documentation can be found at
 
 The hardware reference platform is the Color Computer 3,
 since it is the 6809 system I am most familiar with. I have implemented most of
-the hardware for the Color Computer 3 in QEMU. A major exception is
-the WD1773 floppy disk controller. Instead, I have implemented a more efficient
-QEMU-specific disk controller virtual device.
+the hardware for the Color Computer 3 in QEMU, including a WD1773 / FD-502 floppy
+controller for Disk BASIC. NitrOS-9 can also use a more efficient QEMU-specific
+virtual disk interface.
 
 *NitrOS-9* is a community-based distribution of the Microware OS-9 operating
 system for the 6809 CPU. NitrOS-9 can be found at

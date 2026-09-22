@@ -40,6 +40,7 @@ DECLARE_INSTANCE_CHECKER(Coco3State, COCO3, TYPE_COCO3)
 #define GIME_VEC_SIZE           0x20
 
 #define GIME_INIT0_ROMSEL       0x03
+#define GIME_INIT0_SCS          0x04 /* 1 = map SCS I/O at $FF40–$FF5F */
 #define GIME_INIT0_MC3          0x08
 #define GIME_INIT0_FEN          0x10
 #define GIME_INIT0_IEN          0x20
