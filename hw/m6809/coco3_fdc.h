@@ -52,6 +52,8 @@ struct Coco3FdcState {
     uint8_t latch;
     bool intrq;
     bool drq;
+    bool saw_drq;               /* this command transferred data (Type II) */
+    bool nmi_defer;             /* hold CPU NMI until the next $FF40 write */
 };
 
 #endif /* HW_M6809_COCO3_FDC_H */

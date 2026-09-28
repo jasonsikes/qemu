@@ -10,6 +10,7 @@ from qemu_test import QemuSystemTest
 from m6809.hexprog import (
     BRA_SELF,
     ROM_BASE,
+    ROM_SIZE,
     build_rom,
     mem_bytes,
     run_bios_case,
@@ -181,6 +182,69 @@ class Coco3MachineTest(QemuSystemTest):
                           command_line='x/4xb 0x2600')
             self.assertEqual([0x4f, 0x53, 0x20, 0xfe], mem_bytes(dump),
                              f'dos_boot: memory at 0x2600\n{dump}')
+        finally:
+            vm.shutdown()
+
+    def test_wd1773_halt_burst(self):
+        """Disk BASIC DSKCON loop must store all 256 bytes."""
+        image = bytearray(35 * 18 * 256)
+        image[:256] = bytes(range(256))
+        image_path = self.scratch_file('halt_burst.dsk')
+        with open(image_path, 'wb') as stream:
+            stream.write(image)
+
+        nmi = bytes.fromhex('be0983af6a3b')  # ldx $0983; stx 10,s; rti
+        start = bytes.fromhex(
+            '1a50'          # orcc #$50
+            '10ce1fff'      # lds #$1fff
+            'b6ff90'        # lda $ff90
+            '8a04'          # ora #SCS
+            'b7ff90'        # sta $ff90
+            '8629'          # lda #DS0|MOTOR|DENSITY
+            'b7ff40'        # sta $ff40
+            '8e8040'        # ldx #done
+            'bf0983'        # stx $0983
+            '730982'        # com $0982
+            '8600'          # lda #0
+            'b7ff49'        # sta $ff49
+            '8601'          # lda #1
+            'b7ff4a'        # sta $ff4a
+            '8680'          # lda #$80
+            'b7ff48'        # sta $ff48
+            '8e2000'        # ldx #$2000
+            '8629'          # lda #latch
+            'f6ff4b'        # ldb $ff4b
+            'e780'          # stb ,x+
+            'b7ff40'        # sta $ff40
+            '20f6'          # bra loop
+            '20fe'          # done: bra *
+        )
+        self.assertEqual(len(nmi), 6)
+        self.assertEqual(0x8006 + len(start) - 2, 0x8040)
+        rom = bytearray(ROM_SIZE)
+        rom[:len(nmi)] = nmi
+        rom[len(nmi):len(nmi) + len(start)] = start
+        rom[-4:-2] = (0x8000).to_bytes(2, 'big')
+        rom[-2:] = (0x8006).to_bytes(2, 'big')
+        rom_path = self.scratch_file('halt_burst.rom')
+        with open(rom_path, 'wb') as stream:
+            stream.write(rom)
+
+        vm = self.get_vm(name='halt_burst')
+        vm.add_args('-bios', rom_path,
+                    '-drive', f'if=none,index=2,file={image_path},format=raw',
+                    '-display', 'none',
+                    '-accel', 'tcg,one-insn-per-tb=on')
+        vm.launch()
+        try:
+            try:
+                wait_info_registers(vm, 'PC=8040', timeout=self.timeout)
+            except TimeoutError as err:
+                self.fail(f'halt_burst: timed out\n{err}')
+            dump = vm.cmd('human-monitor-command',
+                          command_line='x/256xb 0x2000')
+            self.assertEqual(list(range(256)), mem_bytes(dump),
+                             f'halt_burst: sector buffer\n{dump}')
         finally:
             vm.shutdown()
 

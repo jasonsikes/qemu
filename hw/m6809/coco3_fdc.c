@@ -4,7 +4,7 @@
  * $FF40 is the write latch (drive select, motor, density, HALT enable).
  * $FF48 is the WD1773. Density gates INTRQ onto CPU NMI. INTRQ also
  * clears the HALT-enable bit. The 6809 HALT pin is not modeled; DRQ
- * stays asserted for the whole sector so Disk BASIC's LDA $FF4B loop
+ * stays asserted for the whole sector so Disk BASIC's LDB $FF4B loop
  * can run without stalling.
  *
  * Copyright (c) 2026 Jason G. Sikes
@@ -33,7 +33,7 @@ static void coco3_fdc_update_ready(Coco3FdcState *s)
 
 static void coco3_fdc_update_irqs(Coco3FdcState *s)
 {
-    bool nmi = s->intrq && (s->latch & FDC_LATCH_DENSITY);
+    bool nmi = s->intrq && (s->latch & FDC_LATCH_DENSITY) && !s->nmi_defer;
     bool halt = (s->latch & FDC_LATCH_HALT) && !s->drq && !s->intrq;
 
     qemu_set_irq(s->irq_nmi, nmi);
@@ -46,6 +46,10 @@ static void coco3_fdc_intrq(void *opaque, int n, int level)
 
     if (level) {
         s->latch &= ~FDC_LATCH_HALT;
+        s->nmi_defer = s->saw_drq;
+        s->saw_drq = false;
+    } else {
+        s->nmi_defer = false;
     }
     s->intrq = level;
     coco3_fdc_update_irqs(s);
@@ -56,6 +60,9 @@ static void coco3_fdc_drq(void *opaque, int n, int level)
     Coco3FdcState *s = opaque;
 
     s->drq = level;
+    if (level) {
+        s->saw_drq = true;
+    }
     coco3_fdc_update_irqs(s);
 }
 
@@ -72,6 +79,9 @@ static void coco3_fdc_latch_write(void *opaque, hwaddr addr, uint64_t val,
     Coco3FdcState *s = opaque;
 
     s->latch = val;
+    if (s->nmi_defer && s->intrq && (s->latch & FDC_LATCH_DENSITY)) {
+        s->nmi_defer = false;
+    }
     coco3_fdc_update_ready(s);
     coco3_fdc_update_irqs(s);
 }
@@ -93,6 +103,8 @@ static void coco3_fdc_reset_hold(Object *obj, ResetType type)
     s->latch = 0;
     s->intrq = false;
     s->drq = false;
+    s->saw_drq = false;
+    s->nmi_defer = false;
     coco3_fdc_update_ready(s);
     coco3_fdc_update_irqs(s);
 }
@@ -153,6 +165,8 @@ static const VMStateDescription vmstate_coco3_fdc = {
         VMSTATE_UINT8(latch, Coco3FdcState),
         VMSTATE_BOOL(intrq, Coco3FdcState),
         VMSTATE_BOOL(drq, Coco3FdcState),
+        VMSTATE_BOOL(saw_drq, Coco3FdcState),
+        VMSTATE_BOOL(nmi_defer, Coco3FdcState),
         VMSTATE_END_OF_LIST()
     }
 };

@@ -774,6 +774,40 @@ static void test_wd1773_nmi_density_gate(void)
     g_free(dsk);
 }
 
+/*
+ * Disk BASIC's HALT burst is LDB $FF4B / STB ,X+ / STA $FF40. Type II
+ * INTRQ must not raise CPU NMI until that latch write, or the last
+ * byte of the sector is never stored.
+ */
+static void test_wd1773_type2_nmi_after_latch(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = qtest_initf(
+        "-M coco3 -bios %s -drive if=none,index=2,file=%s,format=raw",
+        rom_path, dsk);
+    int i;
+
+    fdc_enable_scs(s);
+    qtest_irq_intercept_in(s, CPU_QOM);
+    qtest_writeb(s, FDC_LATCH, FDC_SELECT | FDC_DENSITY);
+    qtest_writeb(s, WD1773_TRACK, 0);
+    qtest_writeb(s, WD1773_SECTOR, 1);
+    qtest_writeb(s, WD1773_CMD, 0x80);
+    g_assert_false(qtest_get_irq(s, CPU_IRQ_NMI));
+
+    for (i = 0; i < 256; i++) {
+        qtest_readb(s, WD1773_DATA);
+        g_assert_false(qtest_get_irq(s, CPU_IRQ_NMI));
+    }
+
+    qtest_writeb(s, FDC_LATCH, FDC_SELECT | FDC_DENSITY);
+    g_assert_true(qtest_get_irq(s, CPU_IRQ_NMI));
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
 static void test_wd1773_intrq_clears_halt(void)
 {
     char *dsk = write_blank_dsk();
@@ -872,6 +906,8 @@ int main(int argc, char **argv)
     qtest_add_func("/coco3/wd1773/latch-ready", test_wd1773_latch_ready);
     qtest_add_func("/coco3/wd1773/nmi-density-gate",
                   test_wd1773_nmi_density_gate);
+    qtest_add_func("/coco3/wd1773/type2-nmi-after-latch",
+                  test_wd1773_type2_nmi_after_latch);
     qtest_add_func("/coco3/wd1773/intrq-clears-halt",
                   test_wd1773_intrq_clears_halt);
     qtest_add_func("/coco3/wd1773/scs-gate", test_fdc_scs_gate);
