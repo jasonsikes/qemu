@@ -832,6 +832,40 @@ static void test_wd1773_intrq_clears_halt(void)
     g_free(dsk);
 }
 
+static void test_wd1773_bios_drive0(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = qtest_initf(
+        "-M coco3 -bios %s -drive if=none,file=%s,format=raw",
+        rom_path, dsk);
+    uint8_t st;
+
+    fdc_enable_scs(s);
+    qtest_writeb(s, FDC_LATCH, FDC_SELECT);
+    qtest_writeb(s, WD1773_CMD, 0x00);
+    st = qtest_readb(s, WD1773_CMD);
+    g_assert_cmphex(st & WD1773_ST_NRDY, ==, 0);
+    g_assert_cmphex(st & WD1773_ST_TR00, ==, WD1773_ST_TR00);
+
+    /*
+     * The QEMU NitrOS-9 boot (boot_qemu) still loads OS9Boot through
+     * virt-disk $FF30. Drive 0 must remain on that port too.
+     */
+    g_assert_cmphex(qtest_readb(s, 0xff30), ==, 'Q');
+    qtest_writeb(s, 0xff34, 0);      /* Q.DRV = 0 */
+    qtest_writeb(s, 0xff35, 0);      /* Q.LSN */
+    qtest_writeb(s, 0xff36, 0);
+    qtest_writeb(s, 0xff37, 0);
+    qtest_writeb(s, 0xff38, 0x20);   /* Q.BUF = $2000 */
+    qtest_writeb(s, 0xff39, 0x00);
+    qtest_writeb(s, 0xff32, 1);      /* QCMD.RD */
+    g_assert_cmphex(qtest_readb(s, 0xff33), ==, 0);
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
 static void test_fdc_scs_gate(void)
 {
     QTestState *s = qtest_initf("-M coco3 -bios %s", rom_path);
@@ -911,6 +945,7 @@ int main(int argc, char **argv)
     qtest_add_func("/coco3/wd1773/intrq-clears-halt",
                   test_wd1773_intrq_clears_halt);
     qtest_add_func("/coco3/wd1773/scs-gate", test_fdc_scs_gate);
+    qtest_add_func("/coco3/wd1773/bios-drive0", test_wd1773_bios_drive0);
     add_coco3_tests("/coco3", NULL);
     add_coco3_tests("/coco3/hd6309", "hd6309");
     add_coco3_tests("/coco3/turbo9", "turbo9");

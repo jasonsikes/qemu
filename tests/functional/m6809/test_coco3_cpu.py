@@ -18,6 +18,21 @@ from m6809.hexprog import (
 )
 
 
+def virt_disk_args(*paths):
+    """Attach images to coco3-virt-disk, not the WD1773 (-bios first -drive)."""
+    args = []
+    props = ('drive', 'drive1')
+    for i, path in enumerate(paths):
+        args.extend((
+            '-drive',
+            f'if=none,id=vd{i},index={4 + i},file={path},format=raw',
+            '-global',
+            f'coco3-virt-disk.{props[i]}=vd{i}',
+        ))
+    return tuple(args)
+
+
+
 class Coco3MachineTest(QemuSystemTest):
 
     timeout = 30
@@ -266,7 +281,7 @@ class Coco3MachineTest(QemuSystemTest):
         image_path = self.scratch_file('vdisk.img')
         with open(image_path, 'wb') as stream:
             stream.write(image)
-        drive = ('-drive', f'if=none,file={image_path},format=raw')
+        drive = virt_disk_args(image_path)
 
         with self.subTest('vdisk_read'):
             run_bios_case(self,
@@ -313,10 +328,7 @@ class Coco3MachineTest(QemuSystemTest):
         image1_path = self.scratch_file('vdisk1.img')
         with open(image1_path, 'wb') as stream:
             stream.write(image1)
-        drives = (
-            '-drive', f'if=none,file={image_path},format=raw',
-            '-drive', f'if=none,file={image1_path},format=raw',
-        )
+        drives = virt_disk_args(image_path, image1_path)
 
         with self.subTest('vdisk_drive1'):
             run_bios_case(self,

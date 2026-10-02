@@ -21,7 +21,9 @@ The ``coco3`` machine includes:
   GIME CART (``$FF92`` bit 0).
 - Virt console at ``$FF10`` (first ``-serial``; NitrOS-9 ``/T0``)
 - Virt disk at ``$FF30`` (``-drive`` index 0 is NitrOS-9 ``/D0``,
-  index 1 is ``/H0``)
+  index 1 is ``/H0``). With ``-bios``, index 0 is also the WD1773
+  floppy so Disk BASIC ``DOS`` and the QEMU NitrOS-9 ``boot_qemu``
+  module can both use the same image.
 - FD-502 / WD1773 at ``$FF40``–``$FF4F`` (latch + chip). GIME
   ``INIT0`` bit 2 (SCS) must be set to decode this window; Color BASIC
   does that. Write Track (``DSKINI``) is unimplemented.
@@ -36,14 +38,23 @@ The ``coco3`` machine includes:
 - 60 Hz GIME vertical border interrupt
 
 ``-kernel`` loads a boot track at ``$2600`` and starts at ``$2602``.
-With no ``-kernel`` and a floppy on the first ``-drive``, the machine
-loads track 34 from that image the same way Disk BASIC ``DOS`` does.
+With neither ``-kernel`` nor ``-bios``, and a floppy on the first
+``-drive``, the machine loads track 34 from that image the same way
+Disk BASIC ``DOS`` does.
 ``-bios`` loads a 32 KiB ROM. ``-bios`` and ``-kernel`` cannot be used
 together.
 
-The first ``-drive`` is ``/D0`` (boot floppy; Boot loads OS9Boot from
-this unit, and ``/startup`` lives here). The second is ``/H0`` (hard
-drive). ``-serial`` is ``/T0``.
+With ``-bios``, the first ``-drive`` is the WD1773 floppy
+and is also virt-disk ``/D0``. Disk BASIC needs
+``-device coco3-cart,romfile=disk11.rom`` (the image must start with
+``DK`` at ``$C000``). Disk BASIC ``DOS`` loads track 34
+through the WD1773; the QEMU NitrOS-9 recipe then reads OS9Boot
+through ``$FF30``. Images must already be RS-DOS formatted; guest
+``DSKINI`` is not emulated.
+
+Without ``-bios``, the first ``-drive`` is NitrOS-9 ``/D0`` (boot
+floppy; Boot loads OS9Boot from this unit, and ``/startup`` lives
+here). The second is ``/H0`` (hard drive). ``-serial`` is ``/T0``.
 The virt RTC follows ``-rtc`` (default ``base=utc``).
 
 .. code-block:: bash
@@ -51,3 +62,8 @@ The virt RTC follows ``-rtc`` (default ``base=utc``).
    qemu-system-m6809 -M coco3 \
        -drive file=build/os9/floppy.dsk,format=raw \
        -drive file=68SDC.VHD,format=raw
+
+   qemu-system-m6809 -M coco3 \
+       -bios coco3.rom \
+       -device coco3-cart,romfile=disk11.rom \
+       -drive file=disk.dsk,format=raw

@@ -100,6 +100,21 @@ Unzip the file and you will see the following file:
   $ build/qemu-system-m6809 -M coco3 \
    -bios /path/to/coco3.rom
 
+Disk BASIC needs ``disk11.rom`` in the cartridge slot (it must start with
+``DK`` at ``$C000``). Pass it with ``-device coco3-cart,romfile=...``.
+
+The floppy is the first ``-drive``. Use a pre-formatted RS-DOS
+``.dsk`` (ToolShed ``decb dskini``); guest ``DSKINI`` / Write Track is not
+emulated. That same image is also virt-disk ``$FF30``, so Disk BASIC
+``DOS`` and the QEMU NitrOS-9 ``boot_qemu`` module can both use it.
+
+.. code-block:: shell
+
+  $ build/qemu-system-m6809 -M coco3 \
+    -bios /path/to/coco3.rom \
+    -device coco3-cart,romfile=/path/to/disk11.rom \
+    -drive file=/path/to/disk.dsk,format=raw
+
 
 Special Thanks
 ==============
