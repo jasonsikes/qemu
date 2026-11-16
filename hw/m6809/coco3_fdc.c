@@ -1,12 +1,6 @@
 /*
  * Tandy FD-502 Color Computer disk controller
  *
- * $FF40 is the write latch (drive select, motor, density, HALT enable).
- * $FF48 is the WD1773. Density gates INTRQ onto CPU NMI. INTRQ also
- * clears the HALT-enable bit. The 6809 HALT pin is not modeled; DRQ
- * stays asserted for the whole sector so Disk BASIC's LDB $FF4B loop
- * can run without stalling.
- *
  * Copyright (c) 2026 Jason G. Sikes
  *
  * This work is licensed under the terms of the GNU GPLv2 or later.
@@ -23,12 +17,26 @@
 #include "hw/core/qdev-properties-system.h"
 #include "coco3_fdc.h"
 
+static void coco3_fdc_update_irqs(Coco3FdcState *s);
+
 static void coco3_fdc_update_ready(Coco3FdcState *s)
 {
     bool sel0 = s->latch & FDC_LATCH_DS0;
     bool motor = s->latch & FDC_LATCH_MOTOR;
 
     wd1773_set_ready(&s->wd1773, sel0 && motor);
+    wd1773_set_side(&s->wd1773, (s->latch & FDC_LATCH_DS3) ? 1 : 0);
+}
+
+static void coco3_fdc_idle_read(void *opaque)
+{
+    Coco3FdcState *s = opaque;
+
+    if (!s->nmi_defer) {
+        return;
+    }
+    s->nmi_defer = false;
+    coco3_fdc_update_irqs(s);
 }
 
 static void coco3_fdc_update_irqs(Coco3FdcState *s)
@@ -133,6 +141,8 @@ static void coco3_fdc_init(Object *obj)
     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
 
     object_initialize_child(obj, "wd1773", &s->wd1773, TYPE_WD1773);
+    s->wd1773.idle_read = coco3_fdc_idle_read;
+    s->wd1773.idle_opaque = s;
 
     memory_region_init(&s->iomem, obj, TYPE_COCO3_FDC, COCO3_FDC_IO_SIZE);
     memory_region_init_io(&s->latch_io, obj, &coco3_fdc_latch_ops, s,

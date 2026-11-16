@@ -33,7 +33,7 @@ DECLARE_INSTANCE_CHECKER(Coco3FdcState, COCO3_FDC, TYPE_COCO3_FDC)
 #define FDC_LATCH_MOTOR         0x08
 #define FDC_LATCH_PRECOMP       0x10
 #define FDC_LATCH_DENSITY       0x20 /* 1 = double; gates INTRQ onto NMI */
-#define FDC_LATCH_DS3           0x40
+#define FDC_LATCH_DS3           0x40 /* side select on an FD-502 */
 #define FDC_LATCH_HALT          0x80
 
 typedef struct BlockBackend BlockBackend;
@@ -53,7 +53,7 @@ struct Coco3FdcState {
     bool intrq;
     bool drq;
     bool saw_drq;               /* this command transferred data (Type II) */
-    bool nmi_defer;             /* hold CPU NMI until the next $FF40 write */
+    bool nmi_defer;             /* hold NMI until the last byte is stored */
 };
 
 #endif /* HW_M6809_COCO3_FDC_H */

@@ -950,18 +950,12 @@ static void coco3_realize(DeviceState *dev, Error **errp)
 
     object_initialize_child(OBJECT(dev), "fdc", &s->fdc, TYPE_COCO3_FDC);
     {
-        /*
-         * qtest uses IF_NONE index 2 so it does not collide with
-         * virt-disk. With -bios, the first -drive is already on
-         * virt-disk; share that backend so Disk BASIC DOS and
-         * boot_qemu both see the same image.
-         */
         DriveInfo *dinfo = drive_get(IF_NONE, 0, 2);
 
         if (dinfo) {
             qdev_prop_set_drive(DEVICE(&s->fdc), "drive",
                                 blk_by_legacy_dinfo(dinfo));
-        } else if (!s->os9_kernel && s->vdisk.blk[0]) {
+        } else if (s->vdisk.blk[0]) {
             s->fdc.blk = s->vdisk.blk[0];
         }
     }

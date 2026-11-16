@@ -165,11 +165,6 @@ static void wd1773_step(WD1773State *s, int dir, bool update)
     wd1773_complete(s, true);
 }
 
-static unsigned wd1773_side(uint8_t cmd)
-{
-    return (cmd >> 1) & 1;
-}
-
 static void wd1773_read_sector(WD1773State *s)
 {
     int64_t off;
@@ -178,7 +173,7 @@ static void wd1773_read_sector(WD1773State *s)
         wd1773_not_ready(s, false);
         return;
     }
-    if (!wd1773_offset(s, wd1773_side(s->cmd), &off)) {
+    if (!wd1773_offset(s, s->side, &off)) {
         s->rnf = true;
         wd1773_complete(s, false);
         return;
@@ -196,6 +191,21 @@ static void wd1773_read_sector(WD1773State *s)
     wd1773_set_drq(s, true);
 }
 
+void wd1773_set_side(WD1773State *s, uint8_t side)
+{
+    uint8_t next = side ? 1 : 0;
+
+    if (s->side == next) {
+        return;
+    }
+    s->side = next;
+    /* Head select is the cart latch. Apply it before any byte is taken. */
+    if (s->busy && !s->xfer_write && s->xfer_i == 0 &&
+        s->xfer_n == WD1773_SECSIZE) {
+        wd1773_read_sector(s);
+    }
+}
+
 static void wd1773_write_sector(WD1773State *s)
 {
     int64_t off;
@@ -209,7 +219,7 @@ static void wd1773_write_sector(WD1773State *s)
         wd1773_complete(s, false);
         return;
     }
-    if (!wd1773_offset(s, wd1773_side(s->cmd), &off)) {
+    if (!wd1773_offset(s, s->side, &off)) {
         s->rnf = true;
         wd1773_complete(s, false);
         return;
@@ -226,7 +236,7 @@ static void wd1773_commit_write(WD1773State *s)
 {
     int64_t off;
 
-    if (!wd1773_offset(s, wd1773_side(s->cmd), &off) ||
+    if (!wd1773_offset(s, s->side, &off) ||
         blk_pwrite(s->blk, off, WD1773_SECSIZE, s->xfer, 0) < 0) {
         s->rnf = true;
     }
@@ -375,6 +385,10 @@ static uint64_t wd1773_read(void *opaque, hwaddr addr, unsigned size)
     case WD1773_R_SECTOR:
         return s->sector;
     case WD1773_R_DATA:
+        /* Spare read after the sector. The last real byte still has xfer_n. */
+        if (!s->xfer_n && !s->busy && s->intrq && s->idle_read) {
+            s->idle_read(s->idle_opaque);
+        }
         return wd1773_read_data(s);
     default:
         g_assert_not_reached();
@@ -439,6 +453,7 @@ static void wd1773_reset_hold(Object *obj, ResetType type)
     s->wr_protect = false;
     s->xfer_n = 0;
     s->ready = false;
+    s->side = 0;
     wd1773_set_drq(s, false);
     wd1773_set_intrq(s, false);
 }

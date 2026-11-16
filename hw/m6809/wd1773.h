@@ -58,6 +58,11 @@ struct WD1773State {
     bool intrq;
     bool drq;
     bool ready;                 /* READY pin, driven by the disk-cart latch */
+    uint8_t side;               /* head, from the cart side-select */
+
+    /* Data-register read after the sector transfer has finished. */
+    void (*idle_read)(void *opaque);
+    void *idle_opaque;
 
     uint8_t xfer[WD1773_SECSIZE];
     uint32_t xfer_i;
@@ -66,4 +71,5 @@ struct WD1773State {
 };
 
 void wd1773_set_ready(WD1773State *s, bool ready);
+void wd1773_set_side(WD1773State *s, uint8_t side);
 #endif /* HW_M6809_WD1773_H */

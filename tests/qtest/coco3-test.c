@@ -514,10 +514,12 @@ static void test_cart_rom(void)
 #define FDC_DS0          0x01
 #define FDC_MOTOR        0x08
 #define FDC_DENSITY      0x20
+#define FDC_SIDE         0x40
 #define FDC_HALT         0x80
 #define FDC_SELECT       (FDC_DS0 | FDC_MOTOR)
 
 #define WD1773_DSK_SIZE (35 * 18 * 256)
+#define WD1773_DSK_SIZE_DS (40 * 2 * 18 * 256)
 
 static char *write_blank_dsk(void)
 {
@@ -528,6 +530,25 @@ static char *write_blank_dsk(void)
     fd = g_file_open_tmp("coco3-wd1773-XXXXXX", &path, &err);
     g_assert_no_error(err);
     g_assert_cmpint(ftruncate(fd, WD1773_DSK_SIZE), ==, 0);
+    close(fd);
+    return path;
+}
+
+/* Track 0 sector 1 on each head, filled with one byte value. */
+static char *write_side_dsk(uint8_t side0, uint8_t side1)
+{
+    char *path = NULL;
+    GError *err = NULL;
+    int fd;
+    uint8_t sector[256];
+
+    fd = g_file_open_tmp("coco3-wd1773-side-XXXXXX", &path, &err);
+    g_assert_no_error(err);
+    g_assert_cmpint(ftruncate(fd, WD1773_DSK_SIZE_DS), ==, 0);
+    memset(sector, side0, sizeof(sector));
+    g_assert_cmpint(pwrite(fd, sector, sizeof(sector), 0), ==, 256);
+    memset(sector, side1, sizeof(sector));
+    g_assert_cmpint(pwrite(fd, sector, sizeof(sector), 18 * 256), ==, 256);
     close(fd);
     return path;
 }
@@ -808,6 +829,80 @@ static void test_wd1773_type2_nmi_after_latch(void)
     g_free(dsk);
 }
 
+static void test_wd1773_type2_nmi_after_extra_read(void)
+{
+    char *dsk = write_blank_dsk();
+    QTestState *s = qtest_initf(
+        "-M coco3 -bios %s -drive if=none,index=2,file=%s,format=raw",
+        rom_path, dsk);
+    int i;
+
+    fdc_enable_scs(s);
+    qtest_irq_intercept_in(s, CPU_QOM);
+    qtest_writeb(s, FDC_LATCH, FDC_SELECT | FDC_DENSITY);
+    qtest_writeb(s, WD1773_TRACK, 0);
+    qtest_writeb(s, WD1773_SECTOR, 1);
+    qtest_writeb(s, WD1773_CMD, 0x80);
+
+    for (i = 0; i < 256; i++) {
+        qtest_readb(s, WD1773_DATA);
+    }
+    g_assert_false(qtest_get_irq(s, CPU_IRQ_NMI));
+
+    qtest_readb(s, WD1773_DATA);
+    g_assert_true(qtest_get_irq(s, CPU_IRQ_NMI));
+
+    qtest_quit(s);
+    unlink(dsk);
+    g_free(dsk);
+}
+
+static void wd1773_read_track0(QTestState *s, uint8_t latch)
+{
+    qtest_writeb(s, FDC_LATCH, latch);
+    qtest_writeb(s, WD1773_TRACK, 0);
+    qtest_writeb(s, WD1773_SECTOR, 1);
+    qtest_writeb(s, WD1773_CMD, 0x80);
+}
+
+/* Latch side select before the command. */
+static void test_wd1773_side_select(void)
+{
+    char *path = write_side_dsk(0x11, 0xa5);
+    QTestState *s = qtest_initf(
+        "-M coco3 -bios %s -drive if=none,index=2,file=%s,format=raw",
+        rom_path, path);
+
+    fdc_enable_scs(s);
+    wd1773_read_track0(s, FDC_SELECT | FDC_SIDE);
+    g_assert_cmphex(qtest_readb(s, WD1773_DATA), ==, 0xa5);
+
+    qtest_quit(s);
+    unlink(path);
+    g_free(path);
+}
+
+/* Boot writes the side bit after the read command, before any data byte. */
+static void test_wd1773_side_after_command(void)
+{
+    char *path = write_side_dsk(0x11, 0xa5);
+    QTestState *s = qtest_initf(
+        "-M coco3 -bios %s -drive if=none,index=2,file=%s,format=raw",
+        rom_path, path);
+    int i;
+
+    fdc_enable_scs(s);
+    wd1773_read_track0(s, FDC_SELECT);
+    qtest_writeb(s, FDC_LATCH, FDC_SELECT | FDC_SIDE);
+    for (i = 0; i < 256; i++) {
+        g_assert_cmphex(qtest_readb(s, WD1773_DATA), ==, 0xa5);
+    }
+
+    qtest_quit(s);
+    unlink(path);
+    g_free(path);
+}
+
 static void test_wd1773_intrq_clears_halt(void)
 {
     char *dsk = write_blank_dsk();
@@ -942,6 +1037,11 @@ int main(int argc, char **argv)
                   test_wd1773_nmi_density_gate);
     qtest_add_func("/coco3/wd1773/type2-nmi-after-latch",
                   test_wd1773_type2_nmi_after_latch);
+    qtest_add_func("/coco3/wd1773/type2-nmi-after-extra-read",
+                  test_wd1773_type2_nmi_after_extra_read);
+    qtest_add_func("/coco3/wd1773/side-select", test_wd1773_side_select);
+    qtest_add_func("/coco3/wd1773/side-after-command",
+                  test_wd1773_side_after_command);
     qtest_add_func("/coco3/wd1773/intrq-clears-halt",
                   test_wd1773_intrq_clears_halt);
     qtest_add_func("/coco3/wd1773/scs-gate", test_fdc_scs_gate);
